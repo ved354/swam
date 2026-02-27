@@ -1,0 +1,26 @@
+{
+  "model_name": "vayuswarm_yolov8n",
+  "base_model": "yolov8n.pt",
+  "num_classes": 13,
+  "classes": {
+    "0": "person",
+    "1": "vehicle_car",
+    "2": "vehicle_truck",
+    "3": "vehicle_motorcycle",
+    "4": "weapon_rifle",
+    "5": "weapon_pistol",
+    "6": "weapon_knife",
+    "7": "uniform_military",
+    "8": "uniform_police",
+    "9": "uniform_civilian",
+    "10": "drone",
+    "11": "suspicious_package",
+    "12": "fire"
+  },
+  "metrics": {
+    "mAP50": 0.9846756834676239,
+    "mAP50_95": 0.9162308550156809,
+    "precision": 0.9719269690176677,
+    "recall": 0.968400020914824
+  }
+}
