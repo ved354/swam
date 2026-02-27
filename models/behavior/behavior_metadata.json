@@ -1,0 +1,14 @@
+{
+  "model": "vayuswarm_behavior",
+  "classes": [
+    "patrol",
+    "evasive",
+    "formation",
+    "stationary",
+    "approaching"
+  ],
+  "window": 30,
+  "features": 5,
+  "params": 73861,
+  "best_acc": 100.0
+}
