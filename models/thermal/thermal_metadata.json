@@ -1,0 +1,12 @@
+{
+  "model": "vayuswarm_thermal",
+  "classes": [
+    "background",
+    "human",
+    "vehicle",
+    "animal",
+    "fire"
+  ],
+  "input_size": 224,
+  "best_val_acc": 100.0
+}
