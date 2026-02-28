@@ -62,6 +62,11 @@ CUSTOM_CLASS_MAP = {
     "drone": DetectionClass.DRONE,
     "suspicious_package": DetectionClass.SUSPICIOUS_PACKAGE,
     "fire": DetectionClass.FIRE,
+    # VisDrone patrol model (5 classes — real aerial data)
+    "car": DetectionClass.VEHICLE_CAR,
+    "truck": DetectionClass.VEHICLE_TRUCK,
+    "motorcycle": DetectionClass.VEHICLE_MOTORCYCLE,
+    "bicycle": DetectionClass.VEHICLE,
 }
 
 # Uniform type extraction from YOLO class name
@@ -107,10 +112,16 @@ class YOLODetector:
             # Detect if this is a custom fine-tuned model
             model_names = getattr(self._model, "names", {})
             if model_names:
-                custom_classes = {"rifle", "handgun", "weapon_rifle", "weapon_handgun"}
-                if any(name in custom_classes for name in model_names.values()):
+                # Detect custom model by checking if any name matches our custom class map
+                custom_indicators = set(CUSTOM_CLASS_MAP.keys())
+                model_name_set = set(model_names.values())
+                if model_name_set & custom_indicators:
                     self._is_custom = True
                     logger.info("yolo.custom_model_detected", classes=list(model_names.values()))
+                elif not model_name_set & {"person", "bicycle", "car", "airplane", "bus", "train", "truck", "boat"}:
+                    # Doesn't look like COCO either — treat as custom
+                    self._is_custom = True
+                    logger.info("yolo.non_coco_model_detected", classes=list(model_names.values()))
 
             logger.info(
                 "yolo.model_loaded",

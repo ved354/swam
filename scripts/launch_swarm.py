@@ -10,6 +10,7 @@ Usage:
 """
 
 import asyncio
+import copy
 import os
 import signal
 import sys
@@ -86,7 +87,7 @@ async def _run_swarm(config, drone_ids, launch_dashboard, dashboard_port):
 
     for i, drone_id in enumerate(drone_ids):
         # Offset home positions for visual separation
-        drone_config = dict(config)
+        drone_config = copy.deepcopy(config)
         drone_config.setdefault("drone", {}).setdefault("home", {})
         drone_config["drone"]["home"]["lat"] = 17.385 + (i * 0.002)
         drone_config["drone"]["home"]["lon"] = 78.487 + (i * 0.003)
@@ -110,14 +111,36 @@ async def _run_swarm(config, drone_ids, launch_dashboard, dashboard_port):
                 drones=len(drone_ids),
                 dashboard=launch_dashboard)
 
-    # Wait for all tasks
+    # Graceful shutdown on SIGINT / SIGTERM
+    shutdown_event = asyncio.Event()
+    loop = asyncio.get_running_loop()
+
+    def _signal_handler():
+        logger.info("swarm.signal_received, initiating shutdown")
+        shutdown_event.set()
+        for t in tasks:
+            t.cancel()
+
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        loop.add_signal_handler(sig, _signal_handler)
+
+    # Wait for all tasks or shutdown
     try:
         await asyncio.gather(*tasks)
     except asyncio.CancelledError:
+        pass
+    finally:
         logger.info("swarm.shutting_down")
         for agent in agents:
-            await agent.stop()
-        await station.stop()
+            try:
+                await agent.stop()
+            except Exception as e:
+                logger.error("swarm.agent_stop_error", error=str(e))
+        try:
+            await station.stop()
+        except Exception as e:
+            logger.error("swarm.station_stop_error", error=str(e))
+        logger.info("swarm.shutdown_complete")
 
 
 async def _run_ground(station, drone_ids):

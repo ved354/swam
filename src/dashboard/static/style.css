@@ -582,3 +582,100 @@ body {
         grid-template-columns: 240px 1fr 260px;
     }
 }
+
+/* ─── COMMAND FORM ──────────────────────────────────────────── */
+
+.cmd-panel {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    overflow: hidden;
+}
+
+.cmd-form {
+    padding: 10px 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.cmd-row {
+    display: flex;
+    gap: 6px;
+}
+
+.cmd-select {
+    flex: 1;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    color: var(--text-primary);
+    font-family: var(--font-mono);
+    font-size: 10px;
+    padding: 6px 8px;
+    outline: none;
+    cursor: pointer;
+    appearance: none;
+    -webkit-appearance: none;
+}
+
+.cmd-select:focus {
+    border-color: var(--border-accent);
+}
+
+.cmd-select option {
+    background: var(--bg-secondary);
+    color: var(--text-primary);
+}
+
+.cmd-input {
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    color: var(--text-primary);
+    font-family: var(--font-mono);
+    font-size: 10px;
+    padding: 6px 8px;
+    outline: none;
+    width: 100%;
+}
+
+.cmd-input:focus {
+    border-color: var(--border-accent);
+}
+
+.cmd-input::placeholder {
+    color: var(--text-dim);
+}
+
+.cmd-button {
+    width: 100%;
+    padding: 8px;
+    background: linear-gradient(135deg, var(--accent-secondary), var(--accent-primary));
+    border: none;
+    border-radius: var(--radius-sm);
+    color: var(--bg-primary);
+    font-family: var(--font-mono);
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 1px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.cmd-button:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 0 15px rgba(0, 212, 255, 0.3);
+}
+
+.cmd-button:active {
+    transform: translateY(0);
+}
+
+.cmd-status {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    text-align: center;
+    min-height: 14px;
+    transition: color 0.2s;
+}

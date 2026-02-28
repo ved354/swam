@@ -101,13 +101,32 @@ class LocalLLM:
         self._total_latency_ms = 0.0
 
     async def connect(self) -> None:
-        """Initialize the HTTP client."""
+        """Initialize the HTTP client (skipped for mock provider)."""
+        if self._provider == "mock":
+            logger.info("local_llm.mock_mode",
+                         drone_id=self._drone_id,
+                         note="Using rule-based mock decisions (no LLM)")
+            return
         import httpx
         self._client = httpx.AsyncClient(timeout=self._timeout)
-        logger.info("local_llm.connected",
-                     drone_id=self._drone_id,
-                     provider=self._provider,
-                     model=self._model)
+
+        # Verify LLM server is reachable; fall back to mock if not
+        try:
+            resp = await self._client.get(self._endpoint, timeout=3.0)
+            resp.raise_for_status()
+            logger.info("local_llm.connected",
+                         drone_id=self._drone_id,
+                         provider=self._provider,
+                         model=self._model)
+        except Exception as e:
+            logger.warning("local_llm.server_unreachable",
+                           drone_id=self._drone_id,
+                           endpoint=self._endpoint,
+                           error=str(e),
+                           fallback="mock")
+            await self._client.aclose()
+            self._client = None
+            self._provider = "mock"
 
     async def decide(
         self,
@@ -197,9 +216,13 @@ class LocalLLM:
             },
         }
 
+        # First call may take longer (model loading into VRAM)
+        timeout = max(self._timeout, 60.0) if self._decision_count <= 1 else self._timeout
+
         response = await self._client.post(
             f"{self._endpoint}/api/chat",
             json=payload,
+            timeout=timeout,
         )
         response.raise_for_status()
         data = response.json()

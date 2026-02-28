@@ -1,0 +1,64 @@
+# ─────────────────────────────────────────────────────────────
+#  VayuSwarm — Docker Compose (Local Swarm)
+#
+#  Runs: 1 ground station + dashboard, 3 drone agents, all
+#  in simulation mode on a shared Docker network.
+#
+#  Usage:
+#    docker compose up --build
+#    docker compose up --build --scale drone=5
+# ─────────────────────────────────────────────────────────────
+
+services:
+  ground:
+    build:
+      context: .
+      target: ground
+    container_name: vayuswarm-ground
+    ports:
+      - "8080:8080"    # Dashboard
+      - "5555:5555"    # ZMQ PUB (ground → drones)
+      - "5556:5556"    # ZMQ SUB (drones → ground)
+    environment:
+      - VAYUSWARM_API_KEY=${VAYUSWARM_API_KEY:-}
+      - LOG_LEVEL=INFO
+    volumes:
+      - event-data:/app/data
+    networks:
+      - swarm
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8080/healthz"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+
+  drone:
+    build:
+      context: .
+      target: drone
+    deploy:
+      replicas: 3
+    environment:
+      - LOG_LEVEL=INFO
+    depends_on:
+      ground:
+        condition: service_healthy
+    networks:
+      - swarm
+
+  # ── Optional: run tests in CI ──
+  test:
+    build:
+      context: .
+      target: test
+    profiles:
+      - test
+    networks:
+      - swarm
+
+volumes:
+  event-data:
+
+networks:
+  swarm:
+    driver: bridge

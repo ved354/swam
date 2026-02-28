@@ -141,6 +141,40 @@
                     </div>
                 </div>
             </div>
+
+            <!-- Quick Command -->
+            <div class="cmd-panel">
+                <div class="panel-header">
+                    <h2>⌘ SEND COMMAND</h2>
+                </div>
+                <div class="cmd-form">
+                    <div class="cmd-row">
+                        <select id="cmd-drone" class="cmd-select">
+                            <option value="">— Drone —</option>
+                        </select>
+                        <select id="cmd-type" class="cmd-select">
+                            <option value="hold">HOLD</option>
+                            <option value="rtl">RTL</option>
+                            <option value="land">LAND</option>
+                            <option value="investigate">INVESTIGATE</option>
+                            <option value="track">TRACK</option>
+                            <option value="goto_waypoint">GOTO</option>
+                            <option value="emergency_stop">EMERGENCY</option>
+                        </select>
+                    </div>
+                    <div class="cmd-row">
+                        <select id="cmd-priority" class="cmd-select">
+                            <option value="normal">NORMAL</option>
+                            <option value="low">LOW</option>
+                            <option value="high">HIGH</option>
+                            <option value="critical">CRITICAL</option>
+                        </select>
+                    </div>
+                    <input type="text" id="cmd-message" class="cmd-input" placeholder="Message (optional)">
+                    <button id="cmd-send" class="cmd-button" onclick="sendCommand()">SEND ▸</button>
+                    <div class="cmd-status" id="cmd-status"></div>
+                </div>
+            </div>
         </section>
     </main>
 

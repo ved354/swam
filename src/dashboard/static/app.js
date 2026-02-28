@@ -8,8 +8,7 @@ let ws = null;
 let startTime = Date.now();
 let drones = {};
 let events = [];
-let commands = [];
-
+let commands = [];let missionZones = { patrol: [], no_go: [] };
 // ─── WebSocket Connection ─────────────────────────────────────
 function connectWebSocket() {
     const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -74,11 +73,21 @@ function handleUpdate(data) {
         updateStats(data.stats);
     }
 
+    // Mission zones for map
+    if (data.mission && data.mission.mission) {
+        const m = data.mission.mission;
+        missionZones.patrol = m.patrol_zones || [];
+        missionZones.no_go = m.no_go_zones || [];
+    }
+
     // Header stats
     const fleet = data.fleet || [];
     const online = fleet.filter(d => d.online).length;
     document.getElementById('drone-count').textContent = `${online}/${fleet.length}`;
     document.getElementById('fleet-badge').textContent = `${online} active`;
+
+    // Populate drone selector for command form
+    populateDroneSelector(fleet);
 
     // Threat count
     let threats = 0;
@@ -168,6 +177,11 @@ function updateMap(fleet) {
         .filter(d => d.position)
         .map(d => d.position);
 
+    // Include zone points in bounds calculation
+    [...missionZones.patrol, ...missionZones.no_go].forEach(zone => {
+        (zone.points || []).forEach(p => positions.push(p));
+    });
+
     if (positions.length === 0) {
         // No drones — show placeholder
         ctx.fillStyle = 'rgba(255,255,255,0.1)';
@@ -195,6 +209,45 @@ function updateMap(fleet) {
 
     const toX = lon => ((lon - minLon) / (maxLon - minLon)) * (w - 40) + 20;
     const toY = lat => ((maxLat - lat) / (maxLat - minLat)) * (h - 40) + 20;
+
+    // Draw patrol zones
+    missionZones.patrol.forEach(zone => {
+        if (!zone.points || zone.points.length < 3) return;
+        ctx.beginPath();
+        ctx.moveTo(toX(zone.points[0].lon), toY(zone.points[0].lat));
+        zone.points.forEach(p => ctx.lineTo(toX(p.lon), toY(p.lat)));
+        ctx.closePath();
+        ctx.fillStyle = 'rgba(0, 212, 255, 0.06)';
+        ctx.fill();
+        ctx.strokeStyle = 'rgba(0, 212, 255, 0.25)';
+        ctx.lineWidth = 1;
+        ctx.setLineDash([6, 4]);
+        ctx.stroke();
+        ctx.setLineDash([]);
+    });
+
+    // Draw no-go zones
+    missionZones.no_go.forEach(zone => {
+        if (!zone.points || zone.points.length < 3) return;
+        ctx.beginPath();
+        ctx.moveTo(toX(zone.points[0].lon), toY(zone.points[0].lat));
+        zone.points.forEach(p => ctx.lineTo(toX(p.lon), toY(p.lat)));
+        ctx.closePath();
+        ctx.fillStyle = 'rgba(255, 23, 68, 0.10)';
+        ctx.fill();
+        ctx.strokeStyle = 'rgba(255, 23, 68, 0.5)';
+        ctx.lineWidth = 1.5;
+        ctx.setLineDash([4, 4]);
+        ctx.stroke();
+        ctx.setLineDash([]);
+        // Label
+        const cx = zone.points.reduce((s, p) => s + toX(p.lon), 0) / zone.points.length;
+        const cy = zone.points.reduce((s, p) => s + toY(p.lat), 0) / zone.points.length;
+        ctx.font = '9px JetBrains Mono';
+        ctx.fillStyle = '#ff1744';
+        ctx.textAlign = 'center';
+        ctx.fillText('NGZ', cx, cy);
+    });
 
     // Draw drones
     fleet.forEach(drone => {
@@ -297,7 +350,73 @@ function updateStats(stats) {
     document.getElementById('stat-decisions').textContent = stats.llm?.decisions || 0;
     document.getElementById('stat-events').textContent = stats.events_logged || 0;
     document.getElementById('stat-commands').textContent = stats.commands_sent || 0;
+    document.getElementById('stat-vetoes').textContent = stats.llm?.history_size || 0;
     document.getElementById('cycle-count').textContent = stats.cycles || 0;
+}
+
+// ─── Drone Selector for Command Form ──────────────────────────
+function populateDroneSelector(fleet) {
+    const sel = document.getElementById('cmd-drone');
+    if (!sel) return;
+    const current = sel.value;
+    const opts = ['<option value="">— Drone —</option>'];
+    fleet.forEach(d => {
+        const selected = d.drone_id === current ? ' selected' : '';
+        opts.push(`<option value="${d.drone_id}"${selected}>${d.drone_id} (${d.state || 'IDLE'})</option>`);
+    });
+    // Also add "all" option
+    const allSel = 'all' === current ? ' selected' : '';
+    opts.push(`<option value="all"${allSel}>ALL DRONES</option>`);
+    sel.innerHTML = opts.join('');
+}
+
+// ─── Send Command ─────────────────────────────────────────────
+async function sendCommand() {
+    const droneId = document.getElementById('cmd-drone').value;
+    const cmdType = document.getElementById('cmd-type').value;
+    const priority = document.getElementById('cmd-priority').value;
+    const message = document.getElementById('cmd-message').value;
+    const statusEl = document.getElementById('cmd-status');
+
+    if (!droneId) {
+        statusEl.textContent = '⚠ Select a drone';
+        statusEl.style.color = 'var(--yellow)';
+        return;
+    }
+
+    const payload = {
+        drone_id: droneId,
+        command: cmdType,
+        priority: priority,
+        message: message || `Dashboard: ${cmdType.toUpperCase()}`,
+    };
+
+    try {
+        // Try WebSocket first
+        if (ws && ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({ type: 'command', ...payload }));
+        }
+        // Also POST via REST
+        const resp = await fetch('/api/command', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+        });
+        const data = await resp.json();
+        if (data.status === 'ok') {
+            statusEl.textContent = `✓ ${cmdType.toUpperCase()} → ${droneId}`;
+            statusEl.style.color = 'var(--green)';
+        } else {
+            statusEl.textContent = `✗ ${data.error || 'Failed'}`;
+            statusEl.style.color = 'var(--red)';
+        }
+    } catch (err) {
+        statusEl.textContent = `✗ ${err.message}`;
+        statusEl.style.color = 'var(--red)';
+    }
+
+    // Clear status after 3 seconds
+    setTimeout(() => { statusEl.textContent = ''; }, 3000);
 }
 
 // ─── Uptime Timer ─────────────────────────────────────────────
@@ -325,7 +444,7 @@ async function pollData() {
             fleet: fleet.drones || [],
             events: events.events || [],
             commands: cmds.commands || [],
-            mission: mission.progress || {},
+            mission: { ...(mission.progress || {}), mission: mission.mission || null },
             stats: stats,
         });
     } catch (err) {

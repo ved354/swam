@@ -1,26 +1,20 @@
 {
-  "model_name": "vayuswarm_yolov8n",
+  "model_name": "vayuswarm_patrol_rgb",
   "base_model": "yolov8n.pt",
-  "num_classes": 13,
+  "dataset": "VisDrone (real aerial drone images)",
+  "dataset_source": "https://huggingface.co/kilanisainikhil/VayuSwarm",
+  "num_classes": 5,
   "classes": {
     "0": "person",
-    "1": "vehicle_car",
-    "2": "vehicle_truck",
-    "3": "vehicle_motorcycle",
-    "4": "weapon_rifle",
-    "5": "weapon_pistol",
-    "6": "weapon_knife",
-    "7": "uniform_military",
-    "8": "uniform_police",
-    "9": "uniform_civilian",
-    "10": "drone",
-    "11": "suspicious_package",
-    "12": "fire"
+    "1": "car",
+    "2": "truck",
+    "3": "motorcycle",
+    "4": "bicycle"
   },
   "metrics": {
-    "mAP50": 0.9846756834676239,
-    "mAP50_95": 0.9162308550156809,
-    "precision": 0.9719269690176677,
-    "recall": 0.968400020914824
+    "mAP50": 0.40003,
+    "mAP50_95": 0.21684,
+    "precision": 0.51431,
+    "recall": 0.3795
   }
 }

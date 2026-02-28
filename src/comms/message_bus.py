@@ -26,24 +26,29 @@ class Publisher:
     ZeroMQ PUB socket wrapper.
     
     Used by:
-    - Ground station to publish commands to drones
-    - Drones to publish reports to ground station
+    - Ground station to publish commands to drones (bind mode)
+    - Drones to publish reports to ground station (connect mode)
     """
 
-    def __init__(self, bind_address: str):
-        self._bind_address = bind_address
+    def __init__(self, address: str, bind: bool = True):
+        self._address = address
+        self._bind = bind
         self._ctx = zmq.asyncio.Context()
         self._socket: Optional[zmq.asyncio.Socket] = None
         self._running = False
 
     async def start(self) -> None:
-        """Bind the PUB socket."""
+        """Start the PUB socket (bind or connect)."""
         self._socket = self._ctx.socket(zmq.PUB)
         self._socket.setsockopt(zmq.SNDHWM, 1000)
         self._socket.setsockopt(zmq.LINGER, 0)
-        self._socket.bind(self._bind_address)
+        if self._bind:
+            self._socket.bind(self._address)
+        else:
+            self._socket.connect(self._address)
         self._running = True
-        logger.info("publisher.started", address=self._bind_address)
+        logger.info("publisher.started", address=self._address,
+                     mode="bind" if self._bind else "connect")
         # Small delay for ZMQ slow-joiner problem
         await asyncio.sleep(0.2)
 
@@ -73,9 +78,10 @@ class Subscriber:
     - Drones to subscribe to ground commands
     """
 
-    def __init__(self, connect_address: str, topics: Optional[list[str]] = None):
-        self._connect_address = connect_address
+    def __init__(self, address: str, topics: Optional[list[str]] = None, bind: bool = False):
+        self._address = address
         self._topics = topics or [""]  # empty string = subscribe to all
+        self._bind = bind
         self._ctx = zmq.asyncio.Context()
         self._socket: Optional[zmq.asyncio.Socket] = None
         self._running = False
@@ -84,7 +90,7 @@ class Subscriber:
         self._task: Optional[asyncio.Task] = None
 
     async def start(self) -> None:
-        """Connect the SUB socket and start receiving."""
+        """Start the SUB socket (bind or connect) and begin receiving."""
         self._socket = self._ctx.socket(zmq.SUB)
         self._socket.setsockopt(zmq.RCVHWM, 1000)
         self._socket.setsockopt(zmq.LINGER, 0)
@@ -92,10 +98,14 @@ class Subscriber:
         for topic in self._topics:
             self._socket.setsockopt_string(zmq.SUBSCRIBE, topic)
 
-        self._socket.connect(self._connect_address)
+        if self._bind:
+            self._socket.bind(self._address)
+        else:
+            self._socket.connect(self._address)
         self._running = True
         self._task = asyncio.create_task(self._receive_loop())
-        logger.info("subscriber.started", address=self._connect_address, topics=self._topics)
+        logger.info("subscriber.started", address=self._address,
+                     mode="bind" if self._bind else "connect", topics=self._topics)
 
     def on_message(self, topic: str, handler: Callable[[str, BaseModel], Coroutine]) -> None:
         """Register an async handler for a topic prefix."""
@@ -203,27 +213,31 @@ class MessageBus:
     """
     High-level message bus combining Publisher + Subscriber + Heartbeat.
     
-    Usage for Ground Station:
-        bus = MessageBus(role="ground", pub_addr="tcp://*:5555", sub_addr="tcp://*:5556")
+    Usage for Ground Station (bind both):
+        bus = MessageBus(role="ground", pub_addr="tcp://*:5555",
+                         sub_addr="tcp://*:5556", pub_bind=True, sub_bind=True)
         
-    Usage for Drone:
-        bus = MessageBus(role="drone", pub_addr="tcp://ground:5556", sub_addr="tcp://ground:5555")
+    Usage for Drone (connect both):
+        bus = MessageBus(role="drone", pub_addr="tcp://ground:5556",
+                         sub_addr="tcp://ground:5555", pub_bind=False, sub_bind=False)
     """
 
     def __init__(
         self,
         role: str,
-        pub_bind_addr: str,
-        sub_connect_addr: str,
+        pub_addr: str,
+        sub_addr: str,
         node_id: str = "",
         topics: Optional[list[str]] = None,
+        pub_bind: bool = True,
+        sub_bind: bool = False,
         heartbeat_interval_s: float = 2.0,
         heartbeat_timeout_s: float = 10.0,
     ):
         self.role = role
         self.node_id = node_id
-        self.publisher = Publisher(pub_bind_addr)
-        self.subscriber = Subscriber(sub_connect_addr, topics)
+        self.publisher = Publisher(pub_addr, bind=pub_bind)
+        self.subscriber = Subscriber(sub_addr, topics, bind=sub_bind)
         self.heartbeat = HeartbeatMonitor(heartbeat_timeout_s)
         self._heartbeat_interval = heartbeat_interval_s
         self._heartbeat_task: Optional[asyncio.Task] = None

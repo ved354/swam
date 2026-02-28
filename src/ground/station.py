@@ -98,14 +98,17 @@ class GroundStation:
 
         self.message_bus = MessageBus(
             role="ground",
-            pub_bind_addr=f"tcp://*:{pub_port}",
-            sub_connect_addr=f"tcp://localhost:{sub_port}",
+            pub_addr=f"tcp://*:{pub_port}",
+            sub_addr=f"tcp://*:{sub_port}",
             node_id="ground",
-            topics=["drone/"],
+            topics=["drone/", "heartbeat/"],
+            pub_bind=True,
+            sub_bind=True,
         )
 
-        # Register handler for drone reports
+        # Register handlers
         self.message_bus.on_message("drone/", self._handle_drone_report)
+        self.message_bus.on_message("heartbeat/", self._handle_heartbeat)
         await self.message_bus.start()
 
         self._running = True
@@ -155,6 +158,14 @@ class GroundStation:
             except Exception as e:
                 logger.error("ground_station.loop_error", error=str(e))
                 await asyncio.sleep(2.0)
+
+    async def _handle_heartbeat(self, topic: str, msg) -> None:
+        """Handle heartbeat from drones."""
+        # Extract drone_id from topic like 'heartbeat/drone_01'
+        parts = topic.split("/")
+        if len(parts) >= 2:
+            node_id = parts[1]
+            self.message_bus.heartbeat.beat(node_id)
 
     async def _handle_drone_report(self, topic: str, msg) -> None:
         """Handle incoming drone report."""

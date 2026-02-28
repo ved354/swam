@@ -1,0 +1,17 @@
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+.env
+*.egg-info/
+dist/
+build/
+data/
+.pytest_cache/
+.ruff_cache/
+*.pt
+*.onnx
+*.pth
+*.npy
+node_modules/

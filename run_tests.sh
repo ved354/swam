@@ -1,6 +1,6 @@
 #!/bin/bash
 # VayuSwarm Test Runner
-# Runs pytest with ROS2 system plugins disabled (they conflict with venv)
+# Strips /opt/ros from PYTHONPATH so ROS entry-point plugins never load.
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
@@ -8,18 +8,22 @@ cd "$SCRIPT_DIR"
 # Activate venv
 source .venv/bin/activate
 
-# Run pytest with PYTHONDONTWRITEBYTECODE and override site-packages
-# to prevent ROS2 launch_testing plugins from loading
-PYTHONDONTWRITEBYTECODE=1 \
-  python -c "
-import sys
-# Block ROS2 modules before pytest loads
-for mod_name in ['launch_testing', 'launch_testing_ros', 'launch_testing_ros_pytest_entrypoint', 'launch', 'lark']:
-    sys.modules[mod_name] = type(sys)('blocked')
-    sys.modules[mod_name].__path__ = []
-    sys.modules[mod_name].__file__ = ''
+# Strip any /opt/ros paths from PYTHONPATH (ROS entry points use these to
+# register pytest plugins before any Python code can block them).
+CLEAN_PYTHONPATH=""
+if [ -n "$PYTHONPATH" ]; then
+    while IFS=: read -ra PARTS; do
+        for p in "${PARTS[@]}"; do
+            case "$p" in
+                /opt/ros/*) ;;   # skip ROS paths
+                *) CLEAN_PYTHONPATH="${CLEAN_PYTHONPATH:+$CLEAN_PYTHONPATH:}$p" ;;
+            esac
+        done
+    done <<< "$PYTHONPATH"
+fi
 
-# Now run pytest
-from pytest import console_main
-console_main()
-" "$@"
+echo "🚀 Running VayuSwarm tests (ROS plugins excluded)..."
+PYTHONPATH="$CLEAN_PYTHONPATH" \
+AMENT_PREFIX_PATH="" \
+ROS_PACKAGE_PATH="" \
+    python -m pytest "$@"

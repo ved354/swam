@@ -36,6 +36,7 @@ from src.drone.px4_interface import PX4Interface
 from src.drone.safety_layer import SafetyLayer
 from src.drone.state_machine import DroneStateMachine
 from src.vision.behavior_analyzer import BehaviorAnalyzer
+from src.vision.camera import CameraSource
 from src.vision.sensor_fusion import SensorFusion
 from src.vision.thermal_model import ThermalModel
 from src.vision.yolo_detector import YOLODetector
@@ -96,6 +97,16 @@ class DroneAgent:
             class_thresholds=yolo_cfg.get("classes", {}),
         )
 
+        # ── Camera Source ──
+        camera_cfg = vision_cfg.get("camera", {})
+        self.camera = CameraSource(
+            source=camera_cfg.get("source"),       # None = synthetic
+            width=camera_cfg.get("width", 1280),
+            height=camera_cfg.get("height", 720),
+            fps=camera_cfg.get("fps", 30),
+            loop=camera_cfg.get("loop", True),
+        )
+
         thermal_cfg = vision_cfg.get("thermal", {})
         self.thermal = ThermalModel(
             model_path=thermal_cfg.get("model_path"),
@@ -138,10 +149,13 @@ class DroneAgent:
         )
 
         # ── PX4 Interface ──
-        px4_cfg = drone_cfg.get("px4", {})
+        # Check top-level "px4:" first, then fall back to "drone.px4:"
+        px4_cfg = self._config.get("px4", {}) or drone_cfg.get("px4", {})
         self.px4 = PX4Interface(
             drone_id=drone_id,
             connection_string=px4_cfg.get("connection_string", "udp:127.0.0.1:14540"),
+            source_system=px4_cfg.get("source_system", 255),
+            source_component=px4_cfg.get("source_component", 0),
             simulation=simulation,
         )
 
@@ -182,28 +196,45 @@ class DroneAgent:
         self.thermal.load()
         self.behavior.load()
 
+        # Open camera
+        self.camera.open()
+
         # Connect PX4
         await self.px4.connect()
+
+        # Set home position from config
+        home_cfg = self._config.get("drone", {}).get("home", {})
+        self.px4.set_home_position(
+            lat=home_cfg.get("lat", self._home.lat),
+            lon=home_cfg.get("lon", self._home.lon),
+            alt=home_cfg.get("alt", self._home.alt),
+        )
 
         # Connect LLM
         await self.llm.connect()
 
         # Set up message bus
         comms_cfg = self._config.get("comms", {})
-        sub_port = comms_cfg.get("ground_pub_port", 5555)
         pub_port = comms_cfg.get("ground_sub_port", 5556)
+
+        # Derive ground SUB address from ground PUB address
+        ground_host = ground_address.rsplit(":", 1)[0]  # e.g. "tcp://localhost"
+        ground_sub_addr = f"{ground_host}:{pub_port}"
 
         self.message_bus = MessageBus(
             role="drone",
-            pub_bind_addr=f"tcp://*:{pub_port + int(self._drone_id.split('_')[-1]) if '_' in self._drone_id else pub_port}",
-            sub_connect_addr=ground_address,
+            pub_addr=ground_sub_addr,
+            sub_addr=ground_address,
             node_id=self._drone_id,
             topics=[f"ground/commands/{self._drone_id}", "ground/commands/all", "heartbeat/"],
+            pub_bind=False,
+            sub_bind=False,
         )
 
         # Register handlers
         self.message_bus.on_message(f"ground/commands/{self._drone_id}", self._handle_ground_command)
         self.message_bus.on_message("ground/commands/all", self._handle_ground_command)
+        self.message_bus.on_message("heartbeat/ground", self._handle_ground_heartbeat)
 
         await self.message_bus.start()
 
@@ -219,6 +250,9 @@ class DroneAgent:
 
         self._running = True
         logger.info("drone_agent.started", drone_id=self._drone_id)
+
+        # Auto-transition through startup: IDLE → PREFLIGHT → TAKEOFF → PATROL
+        await self._auto_startup()
 
         # Start main loop
         await self._main_loop()
@@ -427,6 +461,9 @@ class DroneAgent:
 
         await self.message_bus.publish(f"drone/{self._drone_id}/report", report)
 
+        # Successful publish implies comms are alive
+        self.safety.update_comms_time()
+
     async def _handle_ground_command(self, topic: str, msg) -> None:
         """Handle a command from the ground station."""
         if not isinstance(msg, GroundCommand):
@@ -476,6 +513,24 @@ class DroneAgent:
         elif msg.command_type == CommandType.SET_PATROL_ZONE and msg.patrol_zone:
             self._mission_description = f"Patrolling zone: {msg.patrol_zone.name}"
 
+    async def _handle_ground_heartbeat(self, topic: str, msg) -> None:
+        """Handle heartbeat from ground — confirms comms are alive."""
+        self.safety.update_comms_time()
+
+    async def _auto_startup(self) -> None:
+        """Auto-transition through startup states: IDLE → PREFLIGHT → TAKEOFF → PATROL."""
+        self.fsm.transition(DroneState.PREFLIGHT, reason="Autonomous startup")
+        await asyncio.sleep(0.5)
+
+        await self.px4.arm()
+        self.fsm.transition(DroneState.TAKEOFF, reason="Arming + takeoff")
+        patrol_alt = self._config.get("drone", {}).get("patrol_altitude_m", 50)
+        await self.px4.takeoff(altitude_m=patrol_alt)
+        await asyncio.sleep(1.0)
+
+        self.fsm.transition(DroneState.PATROL, reason="Reached patrol altitude")
+        logger.info("drone_agent.patrol_started", drone_id=self._drone_id, altitude=patrol_alt)
+
     async def _handle_swarm_message(self, sender_id: str, msg) -> None:
         """Handle a message from a peer drone."""
         if isinstance(msg, SwarmMessage):
@@ -491,12 +546,16 @@ class DroneAgent:
                 self._current_events.append(msg.handoff_event)
 
     def _capture_rgb(self) -> np.ndarray:
-        """Capture RGB frame (simulated — returns random noise)."""
-        return np.random.randint(0, 255, (720, 1280, 3), dtype=np.uint8)
+        """Capture RGB frame from camera source."""
+        frame = self.camera.read()
+        if frame is None:
+            # Fallback to synthetic
+            return np.random.randint(0, 255, (720, 1280, 3), dtype=np.uint8)
+        return frame
 
     def _capture_thermal(self) -> Optional[np.ndarray]:
-        """Capture thermal frame (simulated — returns random thermal data)."""
-        return np.random.randint(0, 255, (480, 640), dtype=np.uint8)
+        """Capture thermal frame (synthetic — no real thermal camera in most setups)."""
+        return self.camera.read_thermal()
 
     async def stop(self) -> None:
         """Shutdown all subsystems."""
@@ -507,6 +566,7 @@ class DroneAgent:
             await self.mesh.stop()
         if self.message_bus:
             await self.message_bus.stop()
+        self.camera.release()
         await self.llm.close()
         await self.px4.disconnect()
 

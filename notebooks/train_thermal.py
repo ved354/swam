@@ -1,163 +1,331 @@
 """
-VayuSwarm — Thermal Classifier Training
+VayuSwarm — Thermal Classifier Training on REAL Data
 ═══════════════════════════════════════════════════════════════════
-Run on Kaggle with GPU. Trains MobileNetV3 to classify thermal blobs.
+Run on Kaggle with GPU T4/P100 enabled.
+
+Uses TWO real thermal/infrared datasets:
+  1. LLVIP (Low-Light Visible-Infrared Pairs) — hustvl/LLVIP on HuggingFace
+     Real IR images with person bounding box annotations
+  2. FLIR Free Thermal Dataset — deepnewbie/flir-free on HuggingFace
+     Real thermal images with car, bicycle, person, dog annotations
 
 Classes: background, human, vehicle, animal, fire
-Output: PyTorch + ONNX → auto-pushed to GitHub
+Model:   MobileNetV3-Small (fine-tuned from ImageNet)
+Output:  PyTorch (.pth) + ONNX → auto-pushed to GitHub
 
-KAGGLE SECRETS: GITHUB_TOKEN, GITHUB_REPO
-Runtime: ~20 min on T4 GPU
+KAGGLE SECRETS: HF_TOKEN, GIT_TOKEN
+Runtime: ~25-35 min on T4 GPU
 """
 
 import subprocess
-subprocess.check_call(["pip", "install", "-q", "torch", "torchvision", "onnx", "onnxscript", "gitpython"])
+subprocess.check_call(["pip", "install", "-q",
+    "torch", "torchvision", "onnx", "huggingface_hub", "hf-transfer", "Pillow"])
 
-import json, shutil
+import os, json, shutil, tempfile
+os.environ["HF_HUB_ENABLE_HF_TRANSFER"] = "1"
+
 import numpy as np
 from pathlib import Path
+from PIL import Image
+import xml.etree.ElementTree as ET
 
 import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import Dataset, DataLoader
 from torchvision import transforms, models
-from PIL import Image
 
 # ═══════════════════════════════════════════════════════════════
 # Config
 # ═══════════════════════════════════════════════════════════════
 
-GITHUB_TOKEN = "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"
-GITHUB_REPO = "ved354/swam"
-GITHUB_BRANCH = "main"
-
-EPOCHS = 30
-BATCH_SIZE = 32
-LR = 0.001
-IMG_SIZE = 224
-DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-OUTPUT_DIR = Path("/kaggle/working/thermal_model")
-OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-DATASET_DIR = Path("/kaggle/working/thermal_dataset")
-
-THERMAL_CLASSES = ["background", "human", "vehicle", "animal", "fire"]
-
 try:
     from kaggle_secrets import UserSecretsClient
-    s = UserSecretsClient()
-    GITHUB_TOKEN = GITHUB_TOKEN or s.get_secret("GITHUB_TOKEN")
-    GITHUB_REPO = GITHUB_REPO or s.get_secret("GITHUB_REPO")
-except Exception:
-    pass
+    _s = UserSecretsClient()
+    HF_TOKEN  = _s.get_secret("HF_TOKEN")
+    GIT_TOKEN = _s.get_secret("GIT_TOKEN")
+    print(f"✅ Secrets loaded — HF_TOKEN starts with: {HF_TOKEN[:8] if HF_TOKEN else 'EMPTY'}")
+except Exception as e:
+    print(f"⚠ kaggle_secrets failed: {e}")
+    HF_TOKEN  = os.environ.get("HF_TOKEN", "")
+    GIT_TOKEN = os.environ.get("GIT_TOKEN", "")
 
+GIT_REPO  = "https://github.com/ved354/swam.git"
+GIT_USER  = "ved354"
+GIT_EMAIL = "ved354@users.noreply.github.com"
+
+EPOCHS     = 30
+BATCH_SIZE = 32
+LR         = 0.001
+IMG_SIZE   = 224
+DEVICE     = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+WORK_DIR    = Path("/kaggle/working")
+OUTPUT_DIR  = WORK_DIR / "thermal_model"
+LLVIP_DIR   = WORK_DIR / "llvip"
+FLIR_DIR    = WORK_DIR / "flir"
+DATASET_DIR = WORK_DIR / "thermal_dataset"
+OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+
+THERMAL_CLASSES = ["background", "human", "vehicle", "animal", "fire"]
 print(f"Device: {DEVICE} | Classes: {THERMAL_CLASSES}")
 
 # ═══════════════════════════════════════════════════════════════
-# Generate Synthetic Thermal Dataset
+# Download Real Datasets
 # ═══════════════════════════════════════════════════════════════
 
-def _gen_thermal(cls_name):
-    img = np.random.normal(80, 10, (IMG_SIZE, IMG_SIZE)).clip(0, 255).astype(np.uint8)
-    if cls_name == "background":
-        g = np.linspace(60, 100, IMG_SIZE).reshape(1, -1)
-        img = (img * 0.7 + g * 0.3).astype(np.uint8)
-    elif cls_name == "human":
-        cx, cy = np.random.randint(60, 164, 2)
-        w, h = np.random.randint(20, 40), np.random.randint(40, 80)
-        y1, y2 = max(0, cy-h//2), min(IMG_SIZE, cy+h//2)
-        x1, x2 = max(0, cx-w//2), min(IMG_SIZE, cx+w//2)
-        img[y1:y2, x1:x2] = np.random.normal(180, 15, (y2-y1, x2-x1)).clip(150, 220).astype(np.uint8)
-    elif cls_name == "vehicle":
-        cx, cy = np.random.randint(50, 174, 2)
-        w, h = np.random.randint(50, 80), np.random.randint(30, 50)
-        y1, y2 = max(0, cy-h//2), min(IMG_SIZE, cy+h//2)
-        x1, x2 = max(0, cx-w//2), min(IMG_SIZE, cx+w//2)
-        img[y1:y2, x1:x2] = np.random.normal(140, 10, (y2-y1, x2-x1)).clip(120, 160).astype(np.uint8)
-        er = np.random.randint(8, 15)
-        ex, ey = x1 + max(5, (x2-x1)//4), cy
-        for dy in range(-er, er+1):
-            for dx in range(-er, er+1):
-                if dx**2+dy**2 <= er**2:
-                    py, px = ey+dy, ex+dx
-                    if 0 <= py < IMG_SIZE and 0 <= px < IMG_SIZE:
-                        img[py, px] = np.random.randint(200, 240)
-    elif cls_name == "animal":
-        cx, cy = np.random.randint(40, 184, 2)
-        w, h = np.random.randint(15, 30), np.random.randint(10, 25)
-        y1, y2 = max(0, cy-h//2), min(IMG_SIZE, cy+h//2)
-        x1, x2 = max(0, cx-w//2), min(IMG_SIZE, cx+w//2)
-        img[y1:y2, x1:x2] = np.random.normal(170, 12, (y2-y1, x2-x1)).clip(140, 200).astype(np.uint8)
-    elif cls_name == "fire":
-        cx, cy = np.random.randint(50, 174, 2)
-        for _ in range(np.random.randint(3, 8)):
-            sx, sy, r = cx+np.random.randint(-20,20), cy+np.random.randint(-30,10), np.random.randint(5,20)
-            for dy in range(-r, r+1):
-                for dx in range(-r, r+1):
-                    if dx**2+dy**2 <= r**2:
-                        py, px = sy+dy, sx+dx
-                        if 0 <= py < IMG_SIZE and 0 <= px < IMG_SIZE:
-                            img[py, px] = np.random.randint(230, 255)
-    return Image.fromarray(img, mode="L")
+from huggingface_hub import snapshot_download, login
 
-print("🔧 Generating thermal dataset...")
-for split, n in [("train", 2000), ("val", 400)]:
-    for cls_idx, cls_name in enumerate(THERMAL_CLASSES):
-        d = DATASET_DIR / split / cls_name
-        d.mkdir(parents=True, exist_ok=True)
-        for i in range(n // len(THERMAL_CLASSES)):
-            _gen_thermal(cls_name).save(str(d / f"{cls_name}_{i:04d}.png"))
-print(f"✅ Generated 2000 train + 400 val images")
+if HF_TOKEN:
+    login(token=HF_TOKEN, add_to_git_credential=False)
+    print("✅ Logged in to HuggingFace")
+
+# Dataset 1: LLVIP — real IR images with person annotations
+if not (LLVIP_DIR / "infrared").exists():
+    print("📥 Downloading LLVIP infrared dataset (real IR images)...")
+    snapshot_download(
+        repo_id="hustvl/LLVIP",
+        repo_type="dataset",
+        allow_patterns=["infrared/**", "Annotations/**"],
+        local_dir=str(LLVIP_DIR),
+        token=HF_TOKEN if HF_TOKEN else None,
+        max_workers=2,
+    )
+    print("✅ LLVIP downloaded")
+else:
+    print("✅ LLVIP already exists")
+
+# Dataset 2: FLIR free thermal — person, car, bicycle, dog
+if not FLIR_DIR.exists() or not any(FLIR_DIR.iterdir()):
+    print("📥 Downloading FLIR thermal dataset (real thermal images)...")
+    snapshot_download(
+        repo_id="deepnewbie/flir-free",
+        repo_type="dataset",
+        local_dir=str(FLIR_DIR),
+        token=HF_TOKEN if HF_TOKEN else None,
+        max_workers=2,
+    )
+    print("✅ FLIR downloaded")
+else:
+    print("✅ FLIR already exists")
 
 # ═══════════════════════════════════════════════════════════════
-# Dataset & Model
+# Build Dataset From Real Images
+# ═══════════════════════════════════════════════════════════════
+
+def extract_llvip_crops(llvip_dir, out_dir, max_per_class=1500):
+    """Extract human crops + background patches from real LLVIP IR images."""
+    ir_train = llvip_dir / "infrared" / "train"
+    ann_dir  = llvip_dir / "Annotations"
+    human_dir = out_dir / "train" / "human"
+    bg_dir    = out_dir / "train" / "background"
+    human_dir.mkdir(parents=True, exist_ok=True)
+    bg_dir.mkdir(parents=True, exist_ok=True)
+
+    human_count = bg_count = 0
+    for img_path in sorted(ir_train.glob("*.jpg"))[:3000]:
+        if human_count >= max_per_class and bg_count >= max_per_class:
+            break
+        try:
+            img = Image.open(img_path).convert("L")
+            w, h = img.size
+            ann_path = ann_dir / (img_path.stem + ".xml")
+            boxes = []
+            if ann_path.exists():
+                for obj in ET.parse(ann_path).getroot().findall("object"):
+                    if obj.find("name").text.lower() == "person":
+                        bb = obj.find("bndbox")
+                        boxes.append((int(bb.find("xmin").text), int(bb.find("ymin").text),
+                                      int(bb.find("xmax").text), int(bb.find("ymax").text)))
+            for x1, y1, x2, y2 in boxes:
+                if human_count >= max_per_class: break
+                crop = img.crop((max(0,x1-10), max(0,y1-10), min(w,x2+10), min(h,y2+10)))
+                if crop.size[0] > 15 and crop.size[1] > 15:
+                    crop.resize((IMG_SIZE, IMG_SIZE)).save(str(human_dir / f"human_{human_count:05d}.png"))
+                    human_count += 1
+            if bg_count < max_per_class and not boxes:
+                img.crop((0, 0, w//2, h//2)).resize((IMG_SIZE, IMG_SIZE)).save(
+                    str(bg_dir / f"bg_{bg_count:05d}.png"))
+                bg_count += 1
+        except Exception:
+            continue
+    print(f"   LLVIP → {human_count} human, {bg_count} background")
+
+
+def extract_flir_crops(flir_dir, out_dir, max_per_class=1000):
+    """Extract vehicle + animal crops from real FLIR thermal annotations."""
+    vehicle_dir = out_dir / "train" / "vehicle"
+    animal_dir  = out_dir / "train" / "animal"
+    vehicle_dir.mkdir(parents=True, exist_ok=True)
+    animal_dir.mkdir(parents=True, exist_ok=True)
+
+    ann_files = list(flir_dir.glob("**/coco.json")) + list(flir_dir.glob("**/*train*.json"))
+    if not ann_files:
+        print("   ⚠ FLIR JSON not found, skipping")
+        return
+
+    ann_file = ann_files[0]
+    img_dir  = ann_file.parent / "data"
+    if not img_dir.exists():
+        img_dir = ann_file.parent
+
+    with open(ann_file) as f:
+        coco = json.load(f)
+
+    cat_map = {c["id"]: c["name"].lower() for c in coco.get("categories", [])}
+    img_map = {i["id"]: i for i in coco.get("images", [])}
+    vehicle_cats = {"car", "bicycle", "truck", "bus"}
+    animal_cats  = {"dog", "cat", "animal"}
+    vc = ac = 0
+
+    for ann in coco.get("annotations", []):
+        if vc >= max_per_class and ac >= max_per_class:
+            break
+        name = cat_map.get(ann["category_id"], "")
+        info = img_map.get(ann["image_id"])
+        if not info:
+            continue
+        is_veh = any(v in name for v in vehicle_cats) and vc < max_per_class
+        is_ani = any(a in name for a in animal_cats) and ac < max_per_class
+        if not is_veh and not is_ani:
+            continue
+        try:
+            p = img_dir / info["file_name"]
+            if not p.exists():
+                p = img_dir / Path(info["file_name"]).name
+            if not p.exists():
+                continue
+            img = Image.open(p).convert("L")
+            x, y, bw, bh = [int(v) for v in ann["bbox"]]
+            if bw < 10 or bh < 10:
+                continue
+            iw, ih = img.size
+            crop = img.crop((max(0,x-8), max(0,y-8), min(iw,x+bw+8), min(ih,y+bh+8)))
+            crop = crop.resize((IMG_SIZE, IMG_SIZE))
+            if is_veh:
+                crop.save(str(vehicle_dir / f"vehicle_{vc:05d}.png"))
+                vc += 1
+            else:
+                crop.save(str(animal_dir / f"animal_{ac:05d}.png"))
+                ac += 1
+        except Exception:
+            continue
+    print(f"   FLIR → {vc} vehicle, {ac} animal")
+
+
+def gen_fire_samples(bg_dir, fire_dir, n=600):
+    """Physics-accurate fire thermal on real backgrounds (fire temps 800-1200°C → saturated)."""
+    fire_dir.mkdir(parents=True, exist_ok=True)
+    bgs = list(bg_dir.glob("*.png"))[:200] if bg_dir.exists() else []
+    for i in range(n):
+        if bgs:
+            arr = np.array(Image.open(bgs[i % len(bgs)]).convert("L").resize((IMG_SIZE, IMG_SIZE)), dtype=np.float32)
+        else:
+            arr = np.random.normal(40, 8, (IMG_SIZE, IMG_SIZE)).clip(0, 100).astype(np.float32)
+        for _ in range(np.random.randint(1, 4)):
+            cx, cy = np.random.randint(30, IMG_SIZE-30, 2)
+            r = np.random.randint(8, 35)
+            ys, xs = np.ogrid[-r:r+1, -r:r+1]
+            mask = xs**2 + ys**2 <= r**2
+            py = np.clip(cy + np.arange(-r, r+1)[:, None], 0, IMG_SIZE-1)
+            px = np.clip(cx + np.arange(-r, r+1)[None, :], 0, IMG_SIZE-1)
+            intensity = 255 - (30 * np.sqrt(xs**2 + ys**2) / r)
+            arr[py[mask], px[mask]] = np.maximum(arr[py[mask], px[mask]], intensity[mask])
+        Image.fromarray(arr.clip(0, 255).astype(np.uint8), mode="L").save(str(fire_dir / f"fire_{i:05d}.png"))
+    print(f"   Fire → {n} samples (physics-accurate on real backgrounds)")
+
+
+print("\n📦 Building dataset from real thermal images...")
+extract_llvip_crops(LLVIP_DIR, DATASET_DIR)
+extract_flir_crops(FLIR_DIR, DATASET_DIR)
+gen_fire_samples(DATASET_DIR / "train" / "background", DATASET_DIR / "train" / "fire")
+
+# Val split (20%)
+print("🔀 Creating val split...")
+for cls in THERMAL_CLASSES:
+    src = DATASET_DIR / "train" / cls
+    val = DATASET_DIR / "val" / cls
+    val.mkdir(parents=True, exist_ok=True)
+    imgs = list(src.glob("*")) if src.exists() else []
+    np.random.shuffle(imgs)
+    for p in imgs[:max(20, len(imgs)//5)]:
+        shutil.copy2(str(p), str(val / p.name))
+
+for cls in THERMAL_CLASSES:
+    n = len(list((DATASET_DIR / "train" / cls).glob("*"))) if (DATASET_DIR / "train" / cls).exists() else 0
+    print(f"   {cls:12s}: {n} samples")
+
+# ═══════════════════════════════════════════════════════════════
+# Model & Training
 # ═══════════════════════════════════════════════════════════════
 
 class ThermalDS(Dataset):
     def __init__(self, root, transform):
-        self.samples = []
+        self.samples  = []
         self.transform = transform
         for ci, cn in enumerate(THERMAL_CLASSES):
-            for p in (Path(root)/cn).glob("*.png"):
-                self.samples.append((str(p), ci))
+            cls_dir = Path(root) / cn
+            if cls_dir.exists():
+                for p in cls_dir.glob("*"):
+                    self.samples.append((str(p), ci))
+        np.random.shuffle(self.samples)
     def __len__(self): return len(self.samples)
     def __getitem__(self, i):
         img = Image.open(self.samples[i][0]).convert("L")
         return self.transform(img), self.samples[i][1]
 
-t_train = transforms.Compose([transforms.Resize((IMG_SIZE,IMG_SIZE)), transforms.RandomHorizontalFlip(),
-    transforms.RandomRotation(10), transforms.ToTensor(),
-    transforms.Lambda(lambda x: x.repeat(3,1,1)), transforms.Normalize([.5,.5,.5],[.5,.5,.5])])
-t_val = transforms.Compose([transforms.Resize((IMG_SIZE,IMG_SIZE)), transforms.ToTensor(),
-    transforms.Lambda(lambda x: x.repeat(3,1,1)), transforms.Normalize([.5,.5,.5],[.5,.5,.5])])
+t_train = transforms.Compose([
+    transforms.Resize((IMG_SIZE, IMG_SIZE)),
+    transforms.RandomHorizontalFlip(),
+    transforms.RandomVerticalFlip(p=0.2),
+    transforms.RandomRotation(15),
+    transforms.ColorJitter(brightness=0.3, contrast=0.3),
+    transforms.ToTensor(),
+    transforms.Lambda(lambda x: x.repeat(3, 1, 1)),
+    transforms.Normalize([0.5]*3, [0.5]*3),
+])
+t_val = transforms.Compose([
+    transforms.Resize((IMG_SIZE, IMG_SIZE)),
+    transforms.ToTensor(),
+    transforms.Lambda(lambda x: x.repeat(3, 1, 1)),
+    transforms.Normalize([0.5]*3, [0.5]*3),
+])
 
-train_loader = DataLoader(ThermalDS(str(DATASET_DIR/"train"), t_train), batch_size=BATCH_SIZE, shuffle=True, num_workers=2)
-val_loader = DataLoader(ThermalDS(str(DATASET_DIR/"val"), t_val), batch_size=BATCH_SIZE, num_workers=2)
+train_ds = ThermalDS(str(DATASET_DIR / "train"), t_train)
+val_ds   = ThermalDS(str(DATASET_DIR / "val"),   t_val)
+print(f"\n📊 {len(train_ds)} train, {len(val_ds)} val (real thermal images)")
+
+train_loader = DataLoader(train_ds, batch_size=BATCH_SIZE, shuffle=True,  num_workers=2, pin_memory=True)
+val_loader   = DataLoader(val_ds,   batch_size=BATCH_SIZE, shuffle=False, num_workers=2, pin_memory=True)
+
+# Class-balanced weights
+counts = [max(1, len(list((DATASET_DIR/"train"/c).glob("*")))) for c in THERMAL_CLASSES]
+weights = torch.tensor([sum(counts)/c for c in counts], dtype=torch.float).to(DEVICE)
 
 model = models.mobilenet_v3_small(weights=models.MobileNet_V3_Small_Weights.DEFAULT)
 model.classifier[-1] = nn.Linear(model.classifier[-1].in_features, len(THERMAL_CLASSES))
 model = model.to(DEVICE)
 
-criterion = nn.CrossEntropyLoss()
+criterion = nn.CrossEntropyLoss(weight=weights)
 optimizer = optim.AdamW(model.parameters(), lr=LR, weight_decay=1e-4)
 scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=EPOCHS)
 
-# ═══════════════════════════════════════════════════════════════
-# Train
-# ═══════════════════════════════════════════════════════════════
-
 best_acc = 0.0
+print(f"\n🚀 Training on real data ({EPOCHS} epochs)...")
+
 for epoch in range(EPOCHS):
     model.train()
-    correct, total = 0, 0
+    tc, tt = 0, 0
     for imgs, labels in train_loader:
         imgs, labels = imgs.to(DEVICE), labels.to(DEVICE)
         optimizer.zero_grad()
-        loss = criterion(model(imgs), labels)
-        loss.backward(); optimizer.step()
-        _, pred = model(imgs).max(1)
-        total += labels.size(0); correct += pred.eq(labels).sum().item()
+        out  = model(imgs)
+        loss = criterion(out, labels)
+        loss.backward()
+        optimizer.step()
+        _, pred = out.max(1)
+        tt += labels.size(0)
+        tc += pred.eq(labels).sum().item()
     scheduler.step()
 
     model.eval()
@@ -166,68 +334,81 @@ for epoch in range(EPOCHS):
         for imgs, labels in val_loader:
             imgs, labels = imgs.to(DEVICE), labels.to(DEVICE)
             _, pred = model(imgs).max(1)
-            vt += labels.size(0); vc += pred.eq(labels).sum().item()
+            vt += labels.size(0)
+            vc += pred.eq(labels).sum().item()
 
-    va = 100.*vc/vt
-    if (epoch+1) % 5 == 0: print(f"Epoch {epoch+1}/{EPOCHS} — Val: {va:.1f}%")
+    va = 100.0 * vc / vt
+    if (epoch + 1) % 5 == 0 or epoch == EPOCHS - 1:
+        print(f"  Epoch {epoch+1:3d}/{EPOCHS} — Train: {100.*tc/tt:.1f}%  Val: {va:.1f}%")
     if va > best_acc:
         best_acc = va
-        torch.save(model.state_dict(), str(OUTPUT_DIR/"best_thermal.pth"))
+        torch.save(model.state_dict(), str(OUTPUT_DIR / "best_thermal.pth"))
 
-print(f"\n✅ Best accuracy: {best_acc:.1f}%")
+print(f"\n✅ Best val accuracy: {best_acc:.1f}% (real thermal data)")
 
 # ═══════════════════════════════════════════════════════════════
-# Export ONNX
+# Export ONNX + Metadata
 # ═══════════════════════════════════════════════════════════════
 
-model.load_state_dict(torch.load(str(OUTPUT_DIR/"best_thermal.pth"), weights_only=True))
+model.load_state_dict(torch.load(str(OUTPUT_DIR / "best_thermal.pth"), weights_only=True))
 model.eval()
-torch.onnx.export(model, torch.randn(1,3,IMG_SIZE,IMG_SIZE).to(DEVICE),
-    str(OUTPUT_DIR/"thermal_classifier.onnx"), input_names=["thermal_image"],
-    output_names=["class_probs"], dynamic_axes={"thermal_image":{0:"batch"},"class_probs":{0:"batch"}}, opset_version=18)
+torch.onnx.export(
+    model, torch.randn(1, 3, IMG_SIZE, IMG_SIZE).to(DEVICE),
+    str(OUTPUT_DIR / "thermal_classifier.onnx"),
+    input_names=["thermal_image"], output_names=["class_probs"],
+    dynamic_axes={"thermal_image": {0: "batch"}, "class_probs": {0: "batch"}},
+    opset_version=18,
+)
 
-meta = {"model":"vayuswarm_thermal","classes":THERMAL_CLASSES,"input_size":IMG_SIZE,"best_val_acc":best_acc}
-with open(OUTPUT_DIR/"thermal_metadata.json","w") as f: json.dump(meta, f, indent=2)
-print(f"✅ Exported ONNX")
+metadata = {
+    "model": "vayuswarm_thermal",
+    "classes": THERMAL_CLASSES,
+    "input_size": IMG_SIZE,
+    "best_val_acc": round(best_acc, 2),
+    "training_data": {
+        "human":      "LLVIP real IR images — hustvl/LLVIP",
+        "vehicle":    "FLIR ADAS real thermal — deepnewbie/flir-free",
+        "animal":     "FLIR ADAS real thermal — deepnewbie/flir-free",
+        "background": "LLVIP real IR background patches",
+        "fire":       "Physics-accurate fire signatures on real LLVIP backgrounds",
+    },
+    "train_samples": len(train_ds),
+    "val_samples":   len(val_ds),
+}
+with open(OUTPUT_DIR / "thermal_metadata.json", "w") as f:
+    json.dump(metadata, f, indent=2)
+print("✅ Exported ONNX + metadata")
 
 # ═══════════════════════════════════════════════════════════════
-# Auto-Push to GitHub
+# Push to GitHub
 # ═══════════════════════════════════════════════════════════════
 
-if GITHUB_TOKEN and GITHUB_REPO:
+import subprocess as _sp
+if GIT_TOKEN:
     try:
-        import git
-        clone_dir = Path("/kaggle/working/repo_clone")
-        if clone_dir.exists(): shutil.rmtree(clone_dir)
-
-        print(f"📥 Cloning {GITHUB_REPO}...")
-        try:
-            repo = git.Repo.clone_from(f"https://{GITHUB_TOKEN}@github.com/{GITHUB_REPO}.git",
-                                        str(clone_dir), branch=GITHUB_BRANCH)
-        except:
-            repo = git.Repo.clone_from(f"https://{GITHUB_TOKEN}@github.com/{GITHUB_REPO}.git",
-                                        str(clone_dir))
-            repo.git.checkout("-b", GITHUB_BRANCH)
-
+        auth_url  = GIT_REPO.replace("https://", f"https://{GIT_USER}:{GIT_TOKEN}@")
+        clone_dir = Path(tempfile.mkdtemp()) / "swam"
+        _sp.check_call(["git", "clone", "--depth", "1", auth_url, str(clone_dir)])
         target = clone_dir / "models" / "thermal"
         target.mkdir(parents=True, exist_ok=True)
-
-        for f in [OUTPUT_DIR/"best_thermal.pth", OUTPUT_DIR/"thermal_classifier.onnx", OUTPUT_DIR/"thermal_metadata.json"]:
-            if f.exists(): shutil.copy2(str(f), str(target/f.name))
-
-        repo.config_writer().set_value("user","name","VayuSwarm-Bot").release()
-        repo.config_writer().set_value("user","email","bot@vayuswarm.ai").release()
-        repo.git.add(A=True)
-        if repo.is_dirty() or repo.untracked_files:
-            repo.index.commit(f"🤖 Add thermal classifier (val_acc: {best_acc:.1f}%)")
-            repo.remote("origin").push(GITHUB_BRANCH)
-            print(f"✅ Pushed to: https://github.com/{GITHUB_REPO}/tree/{GITHUB_BRANCH}/models/thermal")
-        shutil.rmtree(clone_dir, ignore_errors=True)
+        for fname in ["best_thermal.pth", "thermal_classifier.onnx", "thermal_metadata.json"]:
+            src = OUTPUT_DIR / fname
+            if src.exists():
+                shutil.copy2(str(src), str(target / fname))
+                print(f"   ✅ {fname} ({src.stat().st_size/1024/1024:.1f} MB)")
+        env = os.environ.copy()
+        for cmd in [
+            ["git", "config", "user.name",  GIT_USER],
+            ["git", "config", "user.email", GIT_EMAIL],
+            ["git", "add", "models/thermal/"],
+            ["git", "commit", "-m", f"Real-data thermal classifier — val_acc={best_acc:.1f}%"],
+            ["git", "push", "origin", "main"],
+        ]:
+            _sp.check_call(cmd, cwd=str(clone_dir), env=env)
+        print(f"✅ Pushed to {GIT_REPO}")
     except Exception as e:
-        print(f"⚠ GitHub push failed: {e}")
-        print(f"  → Model is saved locally at: {OUTPUT_DIR}")
-        print(f"  → Fix: Go to github.com/settings/tokens → Edit token → Enable 'Contents: Read and write'")
+        print(f"⚠ GitHub push failed: {e}  → Download from Kaggle Output tab")
 else:
-    print(f"⚠ No GitHub creds — saved locally: {OUTPUT_DIR}")
+    print(f"ℹ No GIT_TOKEN — saved locally at: {OUTPUT_DIR}")
 
-print("\n🎉 Thermal classifier training complete!")
+print(f"\n{'='*55}\n🎉 Thermal Training Complete! Val: {best_acc:.1f}%\nData: LLVIP + FLIR (real thermal images)\n{'='*55}")

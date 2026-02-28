@@ -105,10 +105,27 @@ class GroundLLM:
         self._decision_count = 0
 
     async def connect(self) -> None:
-        """Initialize the HTTP client."""
+        """Initialize the HTTP client (skipped for mock provider)."""
+        if self._provider == "mock":
+            logger.info("ground_llm.mock_mode",
+                         note="Using rule-based mock decisions (no LLM)")
+            return
         import httpx
         self._client = httpx.AsyncClient(timeout=self._timeout)
-        logger.info("ground_llm.connected", provider=self._provider, model=self._model)
+
+        # Verify LLM server is reachable; fall back to mock if not
+        try:
+            resp = await self._client.get(self._endpoint, timeout=3.0)
+            resp.raise_for_status()
+            logger.info("ground_llm.connected", provider=self._provider, model=self._model)
+        except Exception as e:
+            logger.warning("ground_llm.server_unreachable",
+                           endpoint=self._endpoint,
+                           error=str(e),
+                           fallback="mock")
+            await self._client.aclose()
+            self._client = None
+            self._provider = "mock"
 
     async def strategize(
         self,
@@ -176,7 +193,10 @@ class GroundLLM:
                 "num_predict": self._max_tokens,
             },
         }
-        response = await self._client.post(f"{self._endpoint}/api/chat", json=payload)
+        timeout = max(self._timeout, 120.0) if self._decision_count <= 1 else self._timeout
+        response = await self._client.post(
+            f"{self._endpoint}/api/chat", json=payload, timeout=timeout
+        )
         response.raise_for_status()
         return response.json().get("message", {}).get("content", "")
 

@@ -1,36 +1,38 @@
 # ╔═══════════════════════════════════════════════════════════════╗
-# ║                    VayuSwarm — Global Config                 ║
+# ║          VayuSwarm — Local Simulation Config                 ║
+# ║  Runs fully offline: mock LLM + simulated PX4/camera        ║
+# ║  Usage: python scripts/launch_swarm.py --config config/simulation.yaml
 # ╚═══════════════════════════════════════════════════════════════╝
 
 system:
   name: "VayuSwarm"
   version: "0.1.0"
-  log_level: "INFO"         # DEBUG, INFO, WARNING, ERROR
-  log_format: "json"        # json or console
-  simulation: true           # true = mock PX4, false = real hardware
+  log_level: "INFO"
+  log_format: "console"
+  simulation: true
 
 # ─── Communication ──────────────────────────────────────────────
 comms:
   protocol: "tcp"
-  ground_pub_port: 5555       # Ground station publishes commands
-  ground_sub_port: 5556       # Ground station subscribes to drone reports
-  mesh_base_port: 6000        # Drone mesh network base port
+  ground_pub_port: 5555
+  ground_sub_port: 5556
+  mesh_base_port: 6000
   heartbeat_interval_s: 2.0
   heartbeat_timeout_s: 10.0
   message_ttl_s: 30.0
 
-# ─── LLM ────────────────────────────────────────────────────────
+# ─── LLM — Mock mode (no Ollama needed) ─────────────────────────
 llm:
   ground:
-    provider: "ollama"
-    model: "llama3:70b"
+    provider: "mock"          # rule-based, no LLM server needed
+    model: "mock"
     endpoint: "http://localhost:11434"
     temperature: 0.3
     max_tokens: 2048
-    timeout_s: 30.0
+    timeout_s: 5.0
   drone:
-    provider: "ollama"
-    model: "phi3:3.8b"
+    provider: "mock"          # rule-based, no LLM server needed
+    model: "mock"
     endpoint: "http://localhost:11434"
     temperature: 0.2
     max_tokens: 512
@@ -38,18 +40,15 @@ llm:
 
 # ─── Vision ─────────────────────────────────────────────────────
 vision:  camera:
-    source: null                # null = synthetic, or path to video/device
-    # source: "/path/to/video.mp4"     # Video file (loops)
-    # source: 0                        # USB camera device
-    # source: "rtsp://camera:554/..."  # RTSP stream
+    source: null                # null = synthetic random frames
     width: 1280
     height: 720
     fps: 30
     loop: true  yolo:
-    model_path: "models/yolo/best.pt"    # VayuSwarm fine-tuned (13 classes)
+    model_path: "models/yolo/best.pt"
     confidence_threshold: 0.5
     iou_threshold: 0.45
-    device: "auto"                    # auto, cpu, cuda:0
+    device: "auto"
     classes:
       person: 0.5
       vehicle_car: 0.5
@@ -68,9 +67,9 @@ vision:  camera:
     temperature_person_max_c: 42.0
   fusion:
     iou_match_threshold: 0.3
-    confidence_boost: 0.15           # boost when both sources agree
+    confidence_boost: 0.15
   behavior:
-    window_size: 30                   # frames of history
+    window_size: 30
     model_path: "models/behavior/behavior_transformer.onnx"
     evasion_speed_threshold_ms: 3.0
     formation_spacing_threshold_m: 5.0

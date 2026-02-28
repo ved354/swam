@@ -2,14 +2,24 @@
 VayuSwarm — Dashboard API Routes
 
 REST API and WebSocket endpoints for the real-time dashboard.
+Includes replay endpoints for post-mission review.
 """
 
 from __future__ import annotations
 
+import json
 from typing import Optional
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 import structlog
+
+from proto.messages import (
+    CommandPriority,
+    CommandType,
+    GeoPoint,
+    GroundCommand,
+)
+from src.recorder import MissionReplayer, list_recordings
 
 logger = structlog.get_logger(__name__)
 
@@ -85,6 +95,18 @@ async def websocket_endpoint(websocket: WebSocket):
             # Keep connection alive, handle incoming commands
             data = await websocket.receive_text()
             logger.debug("dashboard.ws_received", data=data[:100])
+
+            # Process command messages from the frontend
+            try:
+                msg = json.loads(data)
+                if msg.get("type") == "command" and _ground_station:
+                    cmd = _build_command(msg)
+                    if cmd:
+                        await _ground_station.send_command(cmd)
+                        await websocket.send_json({"type": "command_ack", "status": "ok"})
+            except (json.JSONDecodeError, KeyError, ValueError):
+                pass
+
     except WebSocketDisconnect:
         _ws_clients.remove(websocket)
         logger.info("dashboard.ws_client_disconnected", total=len(_ws_clients))
@@ -100,3 +122,118 @@ async def broadcast_update(data: dict) -> None:
             disconnected.append(client)
     for client in disconnected:
         _ws_clients.remove(client)
+
+
+# ─── Command API ────────────────────────────────────────────────────────────────
+
+_CMD_TYPE_MAP = {
+    "goto_waypoint": CommandType.GOTO_WAYPOINT,
+    "investigate": CommandType.INVESTIGATE_TARGET,
+    "track": CommandType.TRACK_TARGET,
+    "rtl": CommandType.RETURN_TO_LAUNCH,
+    "land": CommandType.LAND,
+    "hold": CommandType.HOLD_POSITION,
+    "emergency_stop": CommandType.EMERGENCY_STOP,
+    "change_altitude": CommandType.CHANGE_ALTITUDE,
+}
+
+_PRIORITY_MAP = {
+    "low": CommandPriority.LOW,
+    "normal": CommandPriority.NORMAL,
+    "high": CommandPriority.HIGH,
+    "critical": CommandPriority.CRITICAL,
+}
+
+
+def _build_command(payload: dict) -> Optional[GroundCommand]:
+    """Build a GroundCommand from a dashboard payload dict."""
+    drone_id = payload.get("drone_id", "")
+    if not drone_id:
+        return None
+
+    cmd_str = payload.get("command", "hold").lower()
+    cmd_type = _CMD_TYPE_MAP.get(cmd_str, CommandType.HOLD_POSITION)
+
+    waypoint = None
+    if payload.get("lat") and payload.get("lon"):
+        waypoint = GeoPoint(
+            lat=float(payload["lat"]),
+            lon=float(payload["lon"]),
+            alt=float(payload.get("alt", 50)),
+        )
+
+    priority = _PRIORITY_MAP.get(
+        payload.get("priority", "normal").lower(), CommandPriority.NORMAL
+    )
+
+    return GroundCommand(
+        source_id="dashboard",
+        target_drone_id=drone_id,
+        command_type=cmd_type,
+        priority=priority,
+        waypoint=waypoint,
+        altitude=float(payload["alt"]) if payload.get("alt") else None,
+        message=payload.get("message", "Manual command from dashboard"),
+    )
+
+
+@router.post("/api/command")
+async def post_command(payload: dict):
+    """Send a manual command from the dashboard."""
+    if not _ground_station:
+        return {"error": "Ground station not initialized"}
+
+    try:
+        cmd = _build_command(payload)
+        if not cmd:
+            return {"error": "Missing drone_id"}
+        await _ground_station.send_command(cmd)
+        return {"status": "ok", "command": cmd.command_type.value, "drone_id": cmd.target_drone_id}
+    except Exception as e:
+        logger.error("dashboard.command_error", error=str(e))
+        return {"error": str(e)}
+
+
+# ─── Replay API ─────────────────────────────────────────────────────────────────
+
+@router.get("/api/recordings")
+async def get_recordings():
+    """List available mission recordings."""
+    return {"recordings": list_recordings()}
+
+
+@router.get("/api/recordings/{mission_id}")
+async def get_recording_detail(mission_id: str):
+    """Get details of a specific recording."""
+    recordings = list_recordings()
+    for rec in recordings:
+        if rec.get("mission_id") == mission_id:
+            replayer = MissionReplayer(rec["path"])
+            replayer.load()
+            return {
+                "meta": replayer.meta,
+                "total_events": replayer.total_events,
+                "timeline": replayer.get_timeline_summary(),
+            }
+    return {"error": "Recording not found"}
+
+
+@router.get("/api/recordings/{mission_id}/events")
+async def get_recording_events(
+    mission_id: str,
+    start: float = 0,
+    end: float = 0,
+    stream: Optional[str] = None,
+    limit: int = 200,
+):
+    """Get events from a recording within a time range."""
+    recordings = list_recordings()
+    for rec in recordings:
+        if rec.get("mission_id") == mission_id:
+            replayer = MissionReplayer(rec["path"])
+            replayer.load()
+            if end <= 0:
+                end = float("inf")
+            events = replayer.get_events_in_range(start, end, stream=stream)
+            return {"events": events[:limit], "total": len(events)}
+    return {"error": "Recording not found"}
