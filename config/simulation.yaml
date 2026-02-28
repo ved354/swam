@@ -39,12 +39,14 @@ llm:
     timeout_s: 5.0
 
 # ─── Vision ─────────────────────────────────────────────────────
-vision:  camera:
+vision:
+  camera:
     source: null                # null = synthetic random frames
     width: 1280
     height: 720
     fps: 30
-    loop: true  yolo:
+    loop: true
+  yolo:
     model_path: "models/yolo/best.pt"
     confidence_threshold: 0.5
     iou_threshold: 0.45
