@@ -23,6 +23,7 @@ from src.comms.message_bus import MessageBus
 from src.ground.fleet_manager import FleetManager
 from src.ground.ground_llm import GroundLLM
 from src.ground.mission_planner import MissionPlanner
+from src.ground.swarm_coordinator import SwarmCoordinator
 
 logger = structlog.get_logger(__name__)
 
@@ -54,6 +55,7 @@ class GroundStation:
         )
 
         self.mission_planner = MissionPlanner()
+        self.swarm = SwarmCoordinator(config)
 
         self.llm = GroundLLM(
             provider=llm_cfg.get("provider", "ollama"),
@@ -87,6 +89,10 @@ class GroundStation:
 
         # Create default mission
         mission = self.mission_planner.create_default_mission(drone_ids)
+
+        # Initialize swarm zones
+        if mission.patrol_zones:
+            self.swarm.initialize_zones(mission.patrol_zones[0], drone_ids)
 
         # Connect LLM
         await self.llm.connect()
@@ -128,6 +134,11 @@ class GroundStation:
                 health = self.fleet.check_health()
                 if health["issues"]:
                     logger.info("ground_station.health_check", issues=health["issues"])
+
+                # Swarm coordination tick (zones, handoffs, collision, consensus)
+                swarm_cmds = self.swarm.tick(self.fleet, self.mission_planner)
+                for cmd in swarm_cmds:
+                    await self._dispatch_command(cmd)
 
                 # Strategic decision cycle
                 if now - self._last_decision_time >= self._decision_interval:
@@ -238,6 +249,10 @@ class GroundStation:
                 "online": self.fleet.online_count,
             },
             "mission": self.mission_planner.progress,
+            "swarm": {
+                "zones":          self.swarm.get_sector_assignment(),
+                "active_targets": self.swarm.get_active_targets(),
+            },
             "llm": self.llm.stats,
             "events_logged": len(self._event_log),
             "commands_sent": len(self._command_log),
