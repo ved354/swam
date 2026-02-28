@@ -1,0 +1,51 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Virtual environment
+.venv/
+venv/
+env/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Model weights (large binaries - download via scripts/download_models.py)
+models/yolo/*.pt
+models/thermal/*.pth
+models/thermal/*.onnx
+models/behavior/*.pth
+models/behavior/*.onnx
+models/behavior/*.npy
+models/llm_data/*.jsonl
+
+# Keep directory structure
+!models/yolo/.gitkeep
+!models/thermal/.gitkeep
+!models/behavior/.gitkeep
+!models/llm_data/.gitkeep
+
+# Pytest
+.pytest_cache/
+htmlcov/
+.coverage
+
+# Logs
+*.log
+
+# Jupyter
+.ipynb_checkpoints/

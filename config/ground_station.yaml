@@ -1,0 +1,25 @@
+# ╔═══════════════════════════════════════════════════════════════╗
+# ║              VayuSwarm — Ground Station Config               ║
+# ╚═══════════════════════════════════════════════════════════════╝
+
+ground_station:
+  id: "ground_01"
+  name: "Command Center"
+  
+  # Fleet
+  fleet:
+    max_drones: 10
+    heartbeat_interval_s: 2.0
+    drone_timeout_s: 15.0
+    
+  # Strategic decision cycle
+  decision:
+    cycle_interval_s: 5.0        # How often ground LLM re-evaluates
+    min_reports_for_decision: 1  # Min drone reports before deciding
+    history_window: 50            # Number of past decisions to keep
+    
+  # Mission defaults
+  mission:
+    default_altitude_m: 50.0
+    default_speed_ms: 10.0
+    auto_rtl_on_mission_complete: true

@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>VayuSwarm — Mission Control</title>
+    <meta name="description" content="Real-time AI swarm drone command center">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;600&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <!-- HEADER -->
+    <header class="header">
+        <div class="header-left">
+            <div class="logo">
+                <div class="logo-icon">◈</div>
+                <div>
+                    <h1>VAYUSWARM</h1>
+                    <span class="subtitle">MISSION CONTROL</span>
+                </div>
+            </div>
+        </div>
+        <div class="header-center">
+            <div class="status-indicators">
+                <div class="indicator" id="conn-status">
+                    <div class="indicator-dot pulse"></div>
+                    <span>CONNECTED</span>
+                </div>
+                <div class="indicator">
+                    <span class="label">UPTIME</span>
+                    <span class="value" id="uptime">00:00:00</span>
+                </div>
+                <div class="indicator">
+                    <span class="label">CYCLE</span>
+                    <span class="value" id="cycle-count">0</span>
+                </div>
+            </div>
+        </div>
+        <div class="header-right">
+            <div class="indicator">
+                <span class="label">DRONES</span>
+                <span class="value accent" id="drone-count">0/0</span>
+            </div>
+            <div class="indicator">
+                <span class="label">THREATS</span>
+                <span class="value threat" id="threat-count">0</span>
+            </div>
+        </div>
+    </header>
+
+    <!-- MAIN CONTENT -->
+    <main class="dashboard">
+        <!-- LEFT: Drone Cards -->
+        <section class="panel drone-panel">
+            <div class="panel-header">
+                <h2>⬡ FLEET STATUS</h2>
+                <span class="badge" id="fleet-badge">0 active</span>
+            </div>
+            <div class="drone-cards" id="drone-cards">
+                <!-- Drone cards rendered by JS -->
+            </div>
+        </section>
+
+        <!-- CENTER: Map & Events -->
+        <section class="panel center-panel">
+            <!-- Map placeholder -->
+            <div class="map-container" id="map-container">
+                <div class="map-overlay">
+                    <div class="map-header">TACTICAL MAP</div>
+                    <canvas id="tactical-map" width="600" height="400"></canvas>
+                    <div class="map-legend">
+                        <span><i class="dot green"></i> Patrol</span>
+                        <span><i class="dot yellow"></i> Investigating</span>
+                        <span><i class="dot red"></i> Alert</span>
+                        <span><i class="dot gray"></i> RTL/Idle</span>
+                        <span class="ngz">▨ No-Go Zone</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Event Feed -->
+            <div class="event-feed">
+                <div class="panel-header">
+                    <h2>⚡ DETECTION FEED</h2>
+                    <span class="badge" id="event-badge">0 events</span>
+                </div>
+                <div class="event-list" id="event-list">
+                    <!-- Events rendered by JS -->
+                </div>
+            </div>
+        </section>
+
+        <!-- RIGHT: Mission & Commands -->
+        <section class="panel right-panel">
+            <!-- Mission Status -->
+            <div class="mission-panel">
+                <div class="panel-header">
+                    <h2>🎯 MISSION</h2>
+                </div>
+                <div class="mission-content" id="mission-content">
+                    <div class="mission-name" id="mission-name">—</div>
+                    <div class="progress-bar">
+                        <div class="progress-fill" id="mission-progress"></div>
+                    </div>
+                    <div class="mission-stats" id="mission-stats"></div>
+                </div>
+            </div>
+
+            <!-- Command Log -->
+            <div class="command-panel">
+                <div class="panel-header">
+                    <h2>📡 COMMANDS</h2>
+                </div>
+                <div class="command-list" id="command-list">
+                    <!-- Commands rendered by JS -->
+                </div>
+            </div>
+
+            <!-- System Stats -->
+            <div class="stats-panel">
+                <div class="panel-header">
+                    <h2>📊 SYSTEM</h2>
+                </div>
+                <div class="stats-grid" id="stats-grid">
+                    <div class="stat-item">
+                        <span class="stat-label">LLM Decisions</span>
+                        <span class="stat-value" id="stat-decisions">0</span>
+                    </div>
+                    <div class="stat-item">
+                        <span class="stat-label">Events Logged</span>
+                        <span class="stat-value" id="stat-events">0</span>
+                    </div>
+                    <div class="stat-item">
+                        <span class="stat-label">Commands Sent</span>
+                        <span class="stat-value" id="stat-commands">0</span>
+                    </div>
+                    <div class="stat-item">
+                        <span class="stat-label">Safety Vetoes</span>
+                        <span class="stat-value" id="stat-vetoes">0</span>
+                    </div>
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <script src="/static/app.js"></script>
+</body>
+</html>

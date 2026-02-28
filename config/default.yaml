@@ -1,0 +1,88 @@
+# ╔═══════════════════════════════════════════════════════════════╗
+# ║                    VayuSwarm — Global Config                 ║
+# ╚═══════════════════════════════════════════════════════════════╝
+
+system:
+  name: "VayuSwarm"
+  version: "0.1.0"
+  log_level: "INFO"         # DEBUG, INFO, WARNING, ERROR
+  log_format: "json"        # json or console
+  simulation: true           # true = mock PX4, false = real hardware
+
+# ─── Communication ──────────────────────────────────────────────
+comms:
+  protocol: "tcp"
+  ground_pub_port: 5555       # Ground station publishes commands
+  ground_sub_port: 5556       # Ground station subscribes to drone reports
+  mesh_base_port: 6000        # Drone mesh network base port
+  heartbeat_interval_s: 2.0
+  heartbeat_timeout_s: 10.0
+  message_ttl_s: 30.0
+
+# ─── LLM ────────────────────────────────────────────────────────
+llm:
+  ground:
+    provider: "ollama"
+    model: "llama3:70b"
+    endpoint: "http://localhost:11434"
+    temperature: 0.3
+    max_tokens: 2048
+    timeout_s: 30.0
+  drone:
+    provider: "ollama"
+    model: "phi3:3.8b"
+    endpoint: "http://localhost:11434"
+    temperature: 0.2
+    max_tokens: 512
+    timeout_s: 5.0
+
+# ─── Vision ─────────────────────────────────────────────────────
+vision:
+  yolo:
+    model_path: "models/yolo/best.pt"    # VayuSwarm fine-tuned (13 classes)
+    confidence_threshold: 0.5
+    iou_threshold: 0.45
+    device: "auto"                    # auto, cpu, cuda:0
+    classes:
+      person: 0.5
+      vehicle_car: 0.5
+      vehicle_truck: 0.5
+      vehicle_motorcycle: 0.5
+      weapon_rifle: 0.6
+      weapon_pistol: 0.6
+      weapon_knife: 0.6
+      drone: 0.5
+      suspicious_package: 0.5
+      fire: 0.5
+  thermal:
+    enabled: true
+    model_path: "models/thermal/thermal_classifier.onnx"
+    temperature_person_min_c: 30.0
+    temperature_person_max_c: 42.0
+  fusion:
+    iou_match_threshold: 0.3
+    confidence_boost: 0.15           # boost when both sources agree
+  behavior:
+    window_size: 30                   # frames of history
+    model_path: "models/behavior/behavior_transformer.onnx"
+    evasion_speed_threshold_ms: 3.0
+    formation_spacing_threshold_m: 5.0
+
+# ─── Safety ─────────────────────────────────────────────────────
+safety:
+  enabled: true
+  battery_critical_pct: 15
+  battery_warning_pct: 25
+  max_altitude_m: 120
+  min_altitude_m: 5
+  collision_radius_m: 10
+  comms_loss_timeout_s: 15
+  comms_loss_action: "RTL"
+  geofence_radius_m: 5000
+
+# ─── Dashboard ──────────────────────────────────────────────────
+dashboard:
+  host: "0.0.0.0"
+  port: 8080
+  ws_path: "/ws"
+  update_interval_ms: 250

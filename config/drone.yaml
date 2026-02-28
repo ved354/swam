@@ -1,0 +1,40 @@
+# ╔═══════════════════════════════════════════════════════════════╗
+# ║                 VayuSwarm — Drone Config Template            ║
+# ╚═══════════════════════════════════════════════════════════════╝
+
+drone:
+  id: "drone_01"
+  name: "Alpha-1"
+  type: "quadcopter"
+  
+  # PX4 connection
+  px4:
+    connection_string: "udp:127.0.0.1:14540"
+    baud_rate: 57600
+    source_system: 1
+    source_component: 1
+    
+  # Home / launch position
+  home:
+    lat: 17.385044
+    lon: 78.486671
+    alt: 0.0
+    
+  # Patrol defaults
+  patrol:
+    altitude_m: 50.0
+    speed_ms: 10.0
+    loiter_radius_m: 30.0
+    
+  # Camera
+  camera:
+    rgb:
+      enabled: true
+      resolution: [1280, 720]
+      fps: 30
+      source: 0               # camera index or RTSP URL
+    thermal:
+      enabled: true
+      resolution: [640, 480]
+      fps: 15
+      source: 1

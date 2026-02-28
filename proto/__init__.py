@@ -1,0 +1,1 @@
+# Message protocol schemas
