@@ -19,7 +19,12 @@ from pathlib import Path
 # Config
 # ═══════════════════════════════════════════════════════════════
 
-GITHUB_TOKEN = "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"
+try:
+    from kaggle_secrets import UserSecretsClient
+    GITHUB_TOKEN = UserSecretsClient().get_secret("GIT_TOKEN")
+except Exception:
+    import os
+    GITHUB_TOKEN = os.environ.get("GIT_TOKEN", "")
 GITHUB_REPO = "ved354/swam"
 GITHUB_BRANCH = "main"
 
