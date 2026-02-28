@@ -160,6 +160,15 @@ class DroneAgent:
         self._pipeline_interval = 0.1  # seconds (10 Hz)
         self._cycle_count = 0
 
+        # ── Robustness / Degradation tracking ──
+        self._last_known_position: Optional[GeoPoint] = None
+        self._gps_failures = 0
+        self._camera_failures = 0
+        self._llm_failures = 0
+        self._camera_max_failures = 5    # switch to mock after N failures
+        self._llm_max_failures = 3       # fallback to HOLD after N failures
+        self._use_mock_camera = False
+
         # ── Mission context ──
         self._mission_description = "Surveillance patrol"
         self._roe: dict = {}
@@ -215,54 +224,125 @@ class DroneAgent:
         await self._main_loop()
 
     async def _main_loop(self) -> None:
-        """Main perception-to-action loop."""
+        """Main perception-to-action loop with robustness hardening."""
         while self._running:
             try:
                 cycle_start = time.time()
                 self._cycle_count += 1
 
-                # Step 1: Get telemetry
-                telemetry = await self.px4.get_telemetry()
+                # Step 1: Get telemetry (GPS failure handling)
+                try:
+                    telemetry = await self.px4.get_telemetry()
+                    if telemetry.position:
+                        self._last_known_position = telemetry.position
+                        self._gps_failures = 0
+                    else:
+                        raise ValueError("No GPS fix")
+                except Exception as e:
+                    self._gps_failures += 1
+                    if self._gps_failures <= 3:
+                        logger.warning("drone_agent.gps_degraded",
+                                       failures=self._gps_failures,
+                                       using="last_known_position")
+                    if self._last_known_position is None:
+                        logger.error("drone_agent.no_position_available")
+                        await asyncio.sleep(1.0)
+                        continue
+                    # Use last known position
+                    telemetry = await self.px4.get_telemetry()
 
-                # Step 2: Capture and process vision (simulated)
-                rgb_frame = self._capture_rgb()
-                thermal_frame = self._capture_thermal()
+                drone_pos = self._last_known_position or telemetry.position
+
+                # Step 2: Capture frames (camera failure handling)
+                try:
+                    if self._use_mock_camera:
+                        rgb_frame = self._capture_rgb()
+                        thermal_frame = self._capture_thermal()
+                    else:
+                        rgb_frame = self._capture_rgb()
+                        thermal_frame = self._capture_thermal()
+                        self._camera_failures = 0
+                except Exception as e:
+                    self._camera_failures += 1
+                    logger.warning("drone_agent.camera_failure",
+                                   failures=self._camera_failures,
+                                   error=str(e))
+                    if self._camera_failures >= self._camera_max_failures:
+                        if not self._use_mock_camera:
+                            logger.warning("drone_agent.switching_to_mock_camera")
+                            self._use_mock_camera = True
+                    rgb_frame = self._capture_rgb()  # fallback to simulated
+                    thermal_frame = self._capture_thermal()
 
                 # Step 3: YOLOv8 detection
-                rgb_detections = self.yolo.detect(rgb_frame, telemetry.position)
+                try:
+                    rgb_detections = self.yolo.detect(rgb_frame, drone_pos)
+                except Exception as e:
+                    logger.error("drone_agent.yolo_error", error=str(e))
+                    rgb_detections = []
 
                 # Step 4: Thermal analysis
-                if thermal_frame is not None:
-                    thermal_detections = self.thermal.detect(thermal_frame, telemetry.position)
-                else:
-                    thermal_detections = self.thermal.mock_detect(telemetry.position)
+                try:
+                    if thermal_frame is not None:
+                        thermal_detections = self.thermal.detect(thermal_frame, drone_pos)
+                    else:
+                        thermal_detections = self.thermal.mock_detect(drone_pos)
+                except Exception as e:
+                    logger.error("drone_agent.thermal_error", error=str(e))
+                    thermal_detections = []
 
                 # Step 5: Sensor fusion
                 fused_events = self.fusion.fuse(
-                    rgb_detections, thermal_detections, telemetry.position
+                    rgb_detections, thermal_detections, drone_pos
                 )
 
                 # Step 6: Behavior analysis
                 if fused_events:
-                    fused_events = self.behavior.analyze(fused_events)
+                    try:
+                        fused_events = self.behavior.analyze(fused_events)
+                    except Exception as e:
+                        logger.error("drone_agent.behavior_error", error=str(e))
 
                 self._current_events = fused_events
 
-                # Step 7: LLM decision (only when events exist or periodically)
+                # Step 7: LLM decision (with failure fallback)
                 if fused_events or self._cycle_count % 50 == 0:
-                    decision = await self.llm.decide(
-                        fused_events=fused_events,
-                        drone_state=self.fsm.state,
-                        drone_position=telemetry.position,
-                        battery_pct=telemetry.battery_pct,
-                        mission_description=self._mission_description,
-                        roe=self._roe,
-                    )
+                    try:
+                        decision = await self.llm.decide(
+                            fused_events=fused_events,
+                            drone_state=self.fsm.state,
+                            drone_position=drone_pos,
+                            battery_pct=telemetry.battery_pct,
+                            mission_description=self._mission_description,
+                            roe=self._roe,
+                        )
+                        self._llm_failures = 0
+                    except Exception as e:
+                        self._llm_failures += 1
+                        logger.warning("drone_agent.llm_failure",
+                                       failures=self._llm_failures,
+                                       error=str(e))
+                        # Fallback: HOLD position if LLM is repeatedly failing
+                        if self._llm_failures >= self._llm_max_failures:
+                            logger.warning("drone_agent.llm_fallback_hold")
+                            decision = LLMDecision(
+                                source="safety_fallback",
+                                action="HOLD",
+                                reasoning=f"LLM unavailable ({self._llm_failures} failures), holding position",
+                                confidence=1.0,
+                            )
+                        else:
+                            decision = LLMDecision(
+                                source="safety_fallback",
+                                action="CONTINUE",
+                                reasoning="LLM timeout, continuing current behavior",
+                                confidence=0.5,
+                            )
 
                     # Step 8: Safety validation
                     safe_decision, veto = self.safety.validate(
                         decision=decision,
-                        current_position=telemetry.position,
+                        current_position=drone_pos,
                         current_state=self.fsm.state,
                         battery_pct=telemetry.battery_pct,
                     )
@@ -275,19 +355,25 @@ class DroneAgent:
                 # Step 10: Report to ground station
                 now = time.time()
                 if now - self._last_report_time >= self._report_interval:
-                    await self._send_report(telemetry)
+                    try:
+                        await self._send_report(telemetry)
+                    except Exception as e:
+                        logger.warning("drone_agent.report_failed", error=str(e))
                     self._last_report_time = now
 
                 # Step 11: Share position with swarm
                 if self.mesh and self._cycle_count % 10 == 0:
-                    swarm_msg = SwarmMessage(
-                        source_id=self._drone_id,
-                        sender_drone_id=self._drone_id,
-                        position=telemetry.position,
-                        heading=telemetry.heading,
-                        speed=telemetry.speed,
-                    )
-                    await self.mesh.broadcast(swarm_msg)
+                    try:
+                        swarm_msg = SwarmMessage(
+                            source_id=self._drone_id,
+                            sender_drone_id=self._drone_id,
+                            position=drone_pos,
+                            heading=telemetry.heading,
+                            speed=telemetry.speed,
+                        )
+                        await self.mesh.broadcast(swarm_msg)
+                    except Exception as e:
+                        logger.warning("drone_agent.mesh_send_failed", error=str(e))
 
                 # Maintain loop rate
                 elapsed = time.time() - cycle_start
