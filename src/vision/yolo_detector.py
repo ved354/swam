@@ -23,6 +23,7 @@ from proto.messages import (
     DetectionSource,
     GeoPoint,
 )
+from src.vision.geo_tagger import GeoTagger
 
 logger = structlog.get_logger(__name__)
 
@@ -92,6 +93,8 @@ class YOLODetector:
         iou_threshold: float = 0.45,
         device: str = "auto",
         class_thresholds: Optional[dict[str, float]] = None,
+        hfov_deg: float = 90.0,
+        vfov_deg: float = 60.0,
     ):
         self._model_path = model_path
         self._conf_threshold = confidence_threshold
@@ -102,6 +105,7 @@ class YOLODetector:
         self._is_custom = False
         self._frame_count = 0
         self._total_detections = 0
+        self._geo_tagger = GeoTagger(hfov_deg=hfov_deg, vfov_deg=vfov_deg)
 
     def load(self) -> None:
         """Load the YOLOv8 model."""
@@ -140,6 +144,7 @@ class YOLODetector:
         self,
         frame: np.ndarray,
         drone_position: Optional[GeoPoint] = None,
+        heading_deg: float = 0.0,
     ) -> list[DetectionEvent]:
         """
         Run YOLOv8 inference on a single frame.
@@ -147,14 +152,17 @@ class YOLODetector:
         Args:
             frame: BGR image (H, W, 3) numpy array
             drone_position: optional drone GPS for geo-referencing detections
+            heading_deg: compass heading of drone (degrees, 0=North) for
+                         rotating pixel offsets into geographic coordinates
             
         Returns:
-            List of DetectionEvent objects
+            List of DetectionEvent objects with geo_position set to estimated
+            ground GPS location of each detected object.
         """
         self._frame_count += 1
 
         if self._model is None:
-            return self._mock_detect(frame, drone_position)
+            return self._mock_detect(frame, drone_position, heading_deg)
 
         try:
             results = self._model(
@@ -219,10 +227,14 @@ class YOLODetector:
                         detection_class=det_class,
                         confidence=conf,
                         bbox=bbox,
-                        geo_position=drone_position,
+                        geo_position=drone_position,  # will be refined below
                         metadata=meta,
                     )
                     detections.append(detection)
+
+            # Geo-tag: replace drone position with estimated object GPS
+            if drone_position and detections:
+                self._geo_tagger.tag_detections(detections, drone_position, heading_deg)
 
             self._total_detections += len(detections)
 
@@ -244,6 +256,7 @@ class YOLODetector:
         self,
         frame: np.ndarray,
         drone_position: Optional[GeoPoint] = None,
+        heading_deg: float = 0.0,
     ) -> list[DetectionEvent]:
         """Mock detection for testing without a real YOLO model."""
         import random
@@ -269,10 +282,14 @@ class YOLODetector:
                     x_max=min(1, cx + size),
                     y_max=min(1, cy + size),
                 ),
-                geo_position=drone_position,
+                geo_position=drone_position,  # will be refined below
                 metadata={"mock": True, "frame_number": self._frame_count},
             )
             detections.append(detection)
+
+        # Geo-tag mock detections too
+        if drone_position and detections:
+            self._geo_tagger.tag_detections(detections, drone_position, heading_deg)
 
         return detections
 
@@ -285,4 +302,5 @@ class YOLODetector:
             "model_loaded": self._model is not None,
             "model_path": self._model_path,
             "is_custom": self._is_custom,
+            "geo_tagger": self._geo_tagger.stats,
         }

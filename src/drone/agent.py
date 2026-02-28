@@ -310,7 +310,11 @@ class DroneAgent:
 
                 # Step 3: YOLOv8 detection
                 try:
-                    rgb_detections = self.yolo.detect(rgb_frame, drone_pos)
+                    rgb_detections = self.yolo.detect(
+                        rgb_frame,
+                        drone_pos,
+                        heading_deg=getattr(telemetry, "heading", 0.0) or 0.0,
+                    )
                 except Exception as e:
                     logger.error("drone_agent.yolo_error", error=str(e))
                     rgb_detections = []
