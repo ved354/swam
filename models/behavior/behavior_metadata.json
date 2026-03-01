@@ -9,6 +9,12 @@
   ],
   "window": 30,
   "features": 5,
-  "params": 73861,
-  "best_acc": 100.0
+  "params": 104645,
+  "best_acc": 71.72,
+  "training_data": {
+    "primary": "Vayex/VisDrone2018 MOT \u2014 real aerial tracking sequences",
+    "secondary": "keremberke/aerial-sheep \u2014 drone-view livestock tracking",
+    "total_windows": 9918,
+    "labeling": "Motion statistics: speed, heading variance, displacement"
+  }
 }
