@@ -8,5 +8,18 @@
     "fire"
   ],
   "input_size": 224,
-  "best_val_acc": 100.0
+  "best_val_acc": 99.93,
+  "training_data": {
+    "human": "HIT-UAV (Person) + Thermal Dogs & People (person)",
+    "vehicle": "HIT-UAV (Car, OtherVehicle, Bicycle)",
+    "animal": "Thermal Dogs & People (dog)",
+    "background": "HIT-UAV background patches",
+    "fire": "Physics-accurate fire signatures on real IR backgrounds"
+  },
+  "datasets": [
+    "pandrii000/hituav-a-highaltitude-infrared-thermal-dataset",
+    "alsaniipe/thermal-dogs-and-people"
+  ],
+  "train_samples": 6800,
+  "val_samples": 1360
 }
