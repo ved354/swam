@@ -11,10 +11,18 @@
     "3": "motorcycle",
     "4": "bicycle"
   },
+  "training": {
+    "epochs": 100,
+    "batch_size": 32,
+    "img_size": 640,
+    "train_images": 6821,
+    "val_images": 548,
+    "test_images": 1610
+  },
   "metrics": {
-    "mAP50": 0.40003,
-    "mAP50_95": 0.21684,
-    "precision": 0.51431,
-    "recall": 0.3795
+    "mAP50": 0.34875286335172123,
+    "mAP50_95": 0.18717811561131156,
+    "precision": 0.49442087482816455,
+    "recall": 0.3368272349177689
   }
 }
