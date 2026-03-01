@@ -261,11 +261,14 @@ class MissionReplayer:
         bucket_start = t_min
         idx = 0
 
-        for _ in range(buckets):
+        for b in range(buckets):
             bucket_end = bucket_start + bucket_size
             count = 0
             streams: Dict[str, int] = {}
-            while idx < len(self._events) and self._events[idx].get("_t", 0) < bucket_end:
+            while idx < len(self._events) and (
+                self._events[idx].get("_t", 0) < bucket_end
+                or b == buckets - 1
+            ):
                 count += 1
                 s = self._events[idx].get("_stream", "unknown")
                 streams[s] = streams.get(s, 0) + 1
