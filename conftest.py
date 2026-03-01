@@ -25,6 +25,7 @@ for mod in _ROS_BLOCKED:
 # which load BEFORE conftest.py. We unregister them here via pytest_configure,
 # which fires right after all plugins are loaded but before collection.
 _ROS_PLUGIN_NAMES = [
+    "launch_ros",                          # actual entry point name for launch_testing_ros_pytest_entrypoint
     "launch_testing_ros_pytest_entrypoint",
     "launch-testing-ros",
     "launch_testing",

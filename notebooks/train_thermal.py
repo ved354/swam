@@ -384,31 +384,77 @@ print("✅ Exported ONNX + metadata")
 # ═══════════════════════════════════════════════════════════════
 
 import subprocess as _sp
+from urllib.parse import quote as _url_quote
+
+# ── Re-read GIT_TOKEN fresh (in case secret was updated after kernel start) ──
+try:
+    from kaggle_secrets import UserSecretsClient
+    _fresh_token = UserSecretsClient().get_secret("GIT_TOKEN")
+    if _fresh_token:
+        GIT_TOKEN = _fresh_token
+except Exception:
+    pass
+
+# Debug: show first/last few chars so you can verify it's a real PAT
 if GIT_TOKEN:
+    _t = GIT_TOKEN.strip()
+    print(f"🔑 GIT_TOKEN loaded: {_t[:4]}...{_t[-4:]} (len={len(_t)})")
+    if not _t.startswith(("ghp_", "github_pat_")):
+        print("⚠ WARNING: Token doesn't start with 'ghp_' or 'github_pat_'")
+        print("  It looks like your Kaggle GIT_TOKEN secret is NOT a valid GitHub PAT.")
+        print("  Current value starts with:", repr(_t[:40]))
+        print("  → Go to https://github.com/settings/tokens and create a new token")
+        print("  → Then update Kaggle secret GIT_TOKEN and RESTART the kernel")
+else:
+    print("ℹ GIT_TOKEN is empty")
+
+if GIT_TOKEN and GIT_TOKEN.strip().startswith(("ghp_", "github_pat_")):
+    token_stripped = GIT_TOKEN.strip()
     try:
-        auth_url  = GIT_REPO.replace("https://", f"https://{GIT_USER}:{GIT_TOKEN}@")
         clone_dir = Path(tempfile.mkdtemp()) / "swam"
+        # URL-encode the token to handle any special characters safely
+        auth_url = f"https://{GIT_USER}:{_url_quote(token_stripped, safe='')}@github.com/{GIT_USER}/swam.git"
+        print(f"\n📤 Cloning {GIT_REPO}...")
         _sp.check_call(["git", "clone", "--depth", "1", auth_url, str(clone_dir)])
+
         target = clone_dir / "models" / "thermal"
         target.mkdir(parents=True, exist_ok=True)
+
         for fname in ["best_thermal.pth", "thermal_classifier.onnx", "thermal_metadata.json"]:
             src = OUTPUT_DIR / fname
             if src.exists():
                 shutil.copy2(str(src), str(target / fname))
-                print(f"   ✅ {fname} ({src.stat().st_size/1024/1024:.1f} MB)")
+                print(f"   ✅ {fname} ({src.stat().st_size / 1024 / 1024:.1f} MB)")
+
         env = os.environ.copy()
         for cmd in [
             ["git", "config", "user.name",  GIT_USER],
             ["git", "config", "user.email", GIT_EMAIL],
             ["git", "add", "models/thermal/"],
-            ["git", "commit", "-m", f"Real-data thermal classifier — val_acc={best_acc:.1f}%"],
+            ["git", "commit", "-m",
+             f"Real-data thermal classifier — val_acc={best_acc:.1f}%, "
+             f"datasets: LLVIP+FLIR, {len(THERMAL_CLASSES)} classes"],
             ["git", "push", "origin", "main"],
         ]:
             _sp.check_call(cmd, cwd=str(clone_dir), env=env)
-        print(f"✅ Pushed to {GIT_REPO}")
+
+        print(f"\n✅ Pushed thermal model to {GIT_REPO}")
+
     except Exception as e:
-        print(f"⚠ GitHub push failed: {e}  → Download from Kaggle Output tab")
+        print(f"\n⚠ GitHub push failed: {e}")
+        print(f"  → Ensure GIT_TOKEN is a valid GitHub PAT with 'repo' scope")
+        print(f"  → Download from Kaggle Output tab: {OUTPUT_DIR}")
+elif GIT_TOKEN:
+    print(f"\n⚠ GIT_TOKEN is not a valid GitHub PAT — skipping push.")
+    print(f"  Saved locally at: {OUTPUT_DIR}")
 else:
     print(f"ℹ No GIT_TOKEN — saved locally at: {OUTPUT_DIR}")
 
-print(f"\n{'='*55}\n🎉 Thermal Training Complete! Val: {best_acc:.1f}%\nData: LLVIP + FLIR (real thermal images)\n{'='*55}")
+print(f"""
+{'='*55}
+🎉 Thermal Training Complete!
+   Val accuracy : {best_acc:.1f}%
+   Datasets     : LLVIP + FLIR (real thermal)
+   Classes      : {THERMAL_CLASSES}
+{'='*55}
+""")

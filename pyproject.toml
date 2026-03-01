@@ -73,4 +73,4 @@ line-length = 100
 testpaths = ["tests"]
 asyncio_mode = "auto"
 # Disable ROS2 Jazzy pytest plugins that conflict with venv
-addopts = "-p no:launch_testing -p no:launch -p no:launch_testing_ros -p no:ament_copyright -p no:ament_xmllint -p no:ament_lint -p no:ament_flake8 -p no:ament_pep257 -p no:launch_testing_ros_pytest_entrypoint"
+addopts = "-p no:launch_ros -p no:launch_testing -p no:launch -p no:launch_testing_ros -p no:ament_copyright -p no:ament_xmllint -p no:ament_lint -p no:ament_flake8 -p no:ament_pep257 -p no:launch_testing_ros_pytest_entrypoint"
