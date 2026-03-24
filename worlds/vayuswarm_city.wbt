@@ -1,0 +1,387 @@
+#VRML_SIM R2025a utf8
+
+EXTERNPROTO "https://raw.githubusercontent.com/cyberbotics/webots/R2025a/projects/objects/backgrounds/protos/TexturedBackground.proto"
+EXTERNPROTO "https://raw.githubusercontent.com/cyberbotics/webots/R2025a/projects/objects/backgrounds/protos/TexturedBackgroundLight.proto"
+EXTERNPROTO "https://raw.githubusercontent.com/cyberbotics/webots/R2025a/projects/objects/road/protos/StraightRoadSegment.proto"
+EXTERNPROTO "https://raw.githubusercontent.com/cyberbotics/webots/R2025a/projects/objects/road/protos/RoadIntersection.proto"
+EXTERNPROTO "https://raw.githubusercontent.com/cyberbotics/webots/R2025a/projects/objects/buildings/protos/SimpleBuilding.proto"
+EXTERNPROTO "https://raw.githubusercontent.com/cyberbotics/webots/R2025a/projects/objects/buildings/protos/Auditorium.proto"
+EXTERNPROTO "https://raw.githubusercontent.com/cyberbotics/webots/R2025a/projects/objects/buildings/protos/Museum.proto"
+EXTERNPROTO "https://raw.githubusercontent.com/cyberbotics/webots/R2025a/projects/objects/buildings/protos/ResidentialBuilding.proto"
+EXTERNPROTO "https://raw.githubusercontent.com/cyberbotics/webots/R2025a/projects/objects/trees/protos/Tree.proto"
+EXTERNPROTO "https://raw.githubusercontent.com/cyberbotics/webots/R2025a/projects/vehicles/protos/CitroënCZero.proto"
+EXTERNPROTO "https://raw.githubusercontent.com/cyberbotics/webots/R2025a/projects/vehicles/protos/TruckSimple.proto"
+EXTERNPROTO "https://raw.githubusercontent.com/cyberbotics/webots/R2025a/projects/vehicles/protos/MotorbikeSimple.proto"
+EXTERNPROTO "https://raw.githubusercontent.com/cyberbotics/webots/R2025a/projects/humans/protos/Pedestrian.proto"
+EXTERNPROTO "https://raw.githubusercontent.com/cyberbotics/webots/R2025a/projects/robots/dji/mavic-2-pro/protos/Mavic2Pro.proto"
+
+WorldInfo {
+  info [
+    "VayuSwarm — Urban City Simulation"
+    "Drone swarm with moving vehicles and pedestrians"
+  ]
+  title "VayuSwarm City"
+  basicTimeStep 8
+  defaultDamping Damping {
+    linear 0.5
+    angular 0.5
+  }
+}
+
+Viewpoint {
+  orientation -0.3 0.15 0.94 1.2
+  position 0 -80 60
+  follow "drone_01"
+}
+
+# ─── Sky + Lighting ───────────────────────────────────────────────
+TexturedBackground {
+  texture "noon_cloudy_countryside"
+}
+TexturedBackgroundLight {
+  texture "noon_cloudy_countryside"
+  castShadows TRUE
+}
+DirectionalLight {
+  ambientIntensity 0.4
+  direction -0.4 -0.8 -1
+  intensity 3
+  castShadows TRUE
+}
+
+# ─── Ground plane ─────────────────────────────────────────────────
+Solid {
+  translation 0 0 0
+  children [
+    Shape {
+      appearance PBRAppearance {
+        baseColor 0.3 0.35 0.3
+        roughness 1
+        metalness 0
+      }
+      geometry Plane {
+        size 500 500
+      }
+    }
+  ]
+  contactMaterial "ground"
+  boundingObject Plane {
+    size 500 500
+  }
+  locked TRUE
+}
+
+# ─── Roads ────────────────────────────────────────────────────────
+StraightRoadSegment {
+  translation -100 0 0.01
+  rotation 0 0 1 0
+  name "road_main_ns"
+  width 14
+  length 300
+  numberOfLanes 4
+  lines []
+}
+StraightRoadSegment {
+  translation 0 0 0.01
+  rotation 0 0 1 1.5708
+  name "road_main_ew"
+  width 14
+  length 300
+  numberOfLanes 4
+  lines []
+}
+StraightRoadSegment {
+  translation 60 0 0.01
+  rotation 0 0 1 0
+  name "road_secondary_ns"
+  width 8
+  length 200
+  numberOfLanes 2
+  lines []
+}
+StraightRoadSegment {
+  translation 0 -60 0.01
+  rotation 0 0 1 1.5708
+  name "road_secondary_ew"
+  width 8
+  length 200
+  numberOfLanes 2
+  lines []
+}
+
+# ─── Buildings ────────────────────────────────────────────────────
+SimpleBuilding {
+  translation 40 40 0
+  name "office_block_1"
+  floorNumber 12
+  startingFloor 0
+  corners [40 0, 40 30, 10 30, 10 0]
+}
+SimpleBuilding {
+  translation -50 40 0
+  name "office_block_2"
+  floorNumber 8
+  startingFloor 0
+  corners [30 0, 30 28, 0 28, 0 0]
+}
+SimpleBuilding {
+  translation 40 -50 0
+  name "residential_1"
+  floorNumber 5
+  startingFloor 0
+  corners [25 0, 25 20, 0 20, 0 0]
+}
+SimpleBuilding {
+  translation -60 -50 0
+  name "residential_2"
+  floorNumber 6
+  startingFloor 0
+  corners [30 0, 30 22, 0 22, 0 0]
+}
+Auditorium {
+  translation 80 80 0
+  rotation 0 0 1 -1.5708
+  name "civic_center"
+}
+Museum {
+  translation -80 80 0
+  name "city_museum"
+}
+ResidentialBuilding {
+  translation 80 -80 0
+  name "apartment_east"
+}
+ResidentialBuilding {
+  translation -85 -80 0
+  rotation 0 0 1 1.5708
+  name "apartment_west"
+}
+SimpleBuilding {
+  translation 110 20 0
+  name "skyscraper_1"
+  floorNumber 20
+  startingFloor 0
+  corners [20 0, 20 20, 0 20, 0 0]
+}
+SimpleBuilding {
+  translation -110 20 0
+  name "skyscraper_2"
+  floorNumber 18
+  startingFloor 0
+  corners [20 0, 20 20, 0 20, 0 0]
+}
+
+# ─── Trees ────────────────────────────────────────────────────────
+Tree { translation 25 10 0  name "tree_1"  type "oak" height 8 radius 4 }
+Tree { translation -25 10 0 name "tree_2"  type "pine" height 10 radius 3 }
+Tree { translation 25 -10 0 name "tree_3"  type "oak" height 7 radius 4 }
+Tree { translation -25 -10 0 name "tree_4" type "birch" height 9 radius 3 }
+Tree { translation 0 30 0   name "tree_5"  type "oak" height 8 radius 4 }
+Tree { translation 0 -30 0  name "tree_6"  type "pine" height 11 radius 3 }
+Tree { translation 50 0 0   name "tree_7"  type "oak" height 7 radius 4 }
+Tree { translation -50 0 0  name "tree_8"  type "birch" height 9 radius 3 }
+Tree { translation 70 50 0  name "tree_park_1" type "oak" height 10 radius 5 }
+Tree { translation 75 55 0  name "tree_park_2" type "pine" height 12 radius 4 }
+Tree { translation 65 55 0  name "tree_park_3" type "birch" height 8 radius 3 }
+
+# ─── Moving Vehicles ──────────────────────────────────────────────
+# Car 1 — drives south along main road
+CitroënCZero {
+  translation -100 50 0.4
+  rotation 0 0 1 -1.5708
+  name "car_01"
+  color 0.8 0.1 0.1
+  controller "car_cruise"
+  controllerArgs ["--speed 8 --route north_south"]
+}
+# Car 2 — drives north  
+CitroënCZero {
+  translation -100 -30 0.4
+  rotation 0 0 1 1.5708
+  name "car_02"
+  color 0.1 0.3 0.8
+  controller "car_cruise"
+  controllerArgs ["--speed 6 --route north_south"]
+}
+# Car 3 — drives east on cross road
+CitroënCZero {
+  translation -80 0 0.4
+  rotation 0 0 1 0
+  name "car_03"
+  color 0.1 0.8 0.2
+  controller "car_cruise"
+  controllerArgs ["--speed 7 --route east_west"]
+}
+# Car 4 — drives west
+CitroënCZero {
+  translation 80 0 0.4
+  rotation 0 0 1 3.14159
+  name "car_04"
+  color 0.9 0.6 0.1
+  controller "car_cruise"
+  controllerArgs ["--speed 5 --route east_west"]
+}
+# Truck — slow heavy vehicle
+TruckSimple {
+  translation -100 80 0.5
+  rotation 0 0 1 -1.5708
+  name "truck_01"
+  controller "car_cruise"
+  controllerArgs ["--speed 4 --route north_south"]
+}
+# Motorbike 1
+MotorbikeSimple {
+  translation 60 40 0.4
+  rotation 0 0 1 -1.5708
+  name "motorbike_01"
+  controller "car_cruise"
+  controllerArgs ["--speed 10 --route north_south_secondary"]
+}
+# Motorbike 2
+MotorbikeSimple {
+  translation -60 -45 0.4
+  rotation 0 0 1 1.5708
+  name "motorbike_02"
+  controller "car_cruise"
+  controllerArgs ["--speed 9 --route north_south_secondary"]
+}
+
+# ─── Pedestrians ──────────────────────────────────────────────────
+Pedestrian {
+  translation 10 20 0
+  name "pedestrian_01"
+  shirtColor 0.8 0.2 0.2
+  pantsColor 0.2 0.2 0.5
+  speed 1.2
+  waypoints [-10 20 0, -10 -20 0, 10 -20 0, 10 20 0]
+  waypointsRadius 2
+  enableBoundingBox FALSE
+}
+Pedestrian {
+  translation -15 10 0
+  name "pedestrian_02"
+  shirtColor 0.2 0.6 0.8
+  pantsColor 0.1 0.1 0.3
+  speed 1.4
+  waypoints [-15 10 0, 15 10 0, 15 -10 0, -15 -10 0]
+  waypointsRadius 2
+  enableBoundingBox FALSE
+}
+Pedestrian {
+  translation 30 -15 0
+  name "pedestrian_03"
+  shirtColor 0.8 0.8 0.2
+  pantsColor 0.3 0.2 0.1
+  speed 1.1
+  waypoints [30 -15 0, -30 -15 0, -30 15 0, 30 15 0]
+  waypointsRadius 2
+  enableBoundingBox FALSE
+}
+Pedestrian {
+  translation -20 -25 0
+  name "pedestrian_04"
+  shirtColor 0.8 0.4 0.1
+  pantsColor 0.2 0.2 0.2
+  speed 1.3
+  waypoints [-20 -25 0, 20 -25 0]
+  waypointsRadius 2
+  enableBoundingBox FALSE
+}
+Pedestrian {
+  translation 5 30 0
+  name "pedestrian_05"
+  shirtColor 0.4 0.8 0.4
+  pantsColor 0.1 0.3 0.1
+  speed 1.5
+  waypoints [5 30 0, 5 -30 0]
+  waypointsRadius 2
+  enableBoundingBox FALSE
+}
+
+# ─── Drone Takeoff Pads ───────────────────────────────────────────
+Solid {
+  translation 0 5 0.01
+  name "pad_drone_01"
+  children [
+    Shape {
+      appearance PBRAppearance { baseColor 1 0.8 0 roughness 0.8 }
+      geometry Cylinder { radius 1.5 height 0.05 }
+    }
+  ]
+  locked TRUE
+}
+Solid {
+  translation -6 5 0.01
+  name "pad_drone_02"
+  children [
+    Shape {
+      appearance PBRAppearance { baseColor 1 0.8 0 roughness 0.8 }
+      geometry Cylinder { radius 1.5 height 0.05 }
+    }
+  ]
+  locked TRUE
+}
+Solid {
+  translation 6 5 0.01
+  name "pad_drone_03"
+  children [
+    Shape {
+      appearance PBRAppearance { baseColor 1 0.8 0 roughness 0.8 }
+      geometry Cylinder { radius 1.5 height 0.05 }
+    }
+  ]
+  locked TRUE
+}
+
+# ─── Drones ───────────────────────────────────────────────────────
+Mavic2Pro {
+  translation 0 5 0.5
+  rotation 0 0 1 0
+  name "drone_01"
+  controller "drone_controller"
+  controllerArgs ["--drone-id drone_01 --mavlink-port 14550 --camera-port 9001"]
+  cameraSlot [
+    Camera {
+      translation 0.05 0 -0.05
+      rotation 0 1 0 -0.3
+      name "drone_01_camera"
+      width 640
+      height 480
+      fieldOfView 1.047
+    }
+  ]
+}
+Mavic2Pro {
+  translation -6 5 0.5
+  rotation 0 0 1 0
+  name "drone_02"
+  controller "drone_controller"
+  controllerArgs ["--drone-id drone_02 --mavlink-port 14560 --camera-port 9002"]
+  cameraSlot [
+    Camera {
+      translation 0.05 0 -0.05
+      rotation 0 1 0 -0.3
+      name "drone_02_camera"
+      width 640
+      height 480
+      fieldOfView 1.047
+    }
+  ]
+}
+Mavic2Pro {
+  translation 6 5 0.5
+  rotation 0 0 1 0
+  name "drone_03"
+  controller "drone_controller"
+  controllerArgs ["--drone-id drone_03 --mavlink-port 14570 --camera-port 9003"]
+  cameraSlot [
+    Camera {
+      translation 0.05 0 -0.05
+      rotation 0 1 0 -0.3
+      name "drone_03_camera"
+      width 640
+      height 480
+      fieldOfView 1.047
+    }
+  ]
+}
